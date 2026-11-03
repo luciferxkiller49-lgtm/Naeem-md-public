@@ -44,7 +44,11 @@ class BotManager {
       }
     }
 
-    capacity.setCount(this.instances.size);
+    // FIX: was `capacity.setCount(this.instances.size)` here, which counts
+    // sockets that are still 'connecting' as if they were live. /active (in
+    // server.js) reports getActiveCount() (only 'online'). Using the same
+    // metric here keeps the panel's capacity view and /active in agreement.
+    capacity.setCount(this.getActiveCount());
   }
 
   async addInstance(number) {
@@ -60,7 +64,6 @@ class BotManager {
   async startInstance(number, isNewPairing = false) {
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
-    // If already running, return existing
     if (this.instances.has(cleanNumber) && !isNewPairing) {
       return this.instances.get(cleanNumber);
     }
@@ -95,7 +98,6 @@ class BotManager {
     if (isNewPairing && !sock.authState.creds.registered) {
       pairingPromise = new Promise(async (resolve, reject) => {
         try {
-          // Slight delay to allow Baileys socket handshake
           await safety.sleep(2000);
           const code = await sock.requestPairingCode(cleanNumber);
           instanceData.pairingCode = code;
@@ -106,10 +108,8 @@ class BotManager {
       });
     }
 
-    // Save creds on change
     sock.ev.on('creds.update', saveCreds);
 
-    // Connection events
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
 
@@ -120,13 +120,13 @@ class BotManager {
       if (connection === 'open') {
         instanceData.status = 'online';
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
-        capacity.setCount(this.instances.size);
+        // FIX: use getActiveCount() (see note in init())
+        capacity.setCount(this.getActiveCount());
 
-        // Send welcoming notification to owner
         try {
           const userJid = `${cleanNumber}@s.whatsapp.net`;
           const intro = await store.getIntro(cleanNumber);
-          const welcomeMsg = intro || 
+          const welcomeMsg = intro ||
             `*${config.BOT_NAME} Connected!*\n` +
             `• Node: #${config.APP_ID}\n` +
             `• Prefix: ${config.DEFAULT_PREFIX}\n` +
@@ -148,25 +148,22 @@ class BotManager {
         if (shouldReconnect) {
           setTimeout(() => this.startInstance(cleanNumber, false), 5000);
         } else {
-          // Device was unlinked / logged out
           console.log(`[BOT-MGR] Session logged out for +${cleanNumber}. Purging...`);
           this.instances.delete(cleanNumber);
           await deleteSession();
-          capacity.setCount(this.instances.size);
+          // FIX: use getActiveCount() (see note in init())
+          capacity.setCount(this.getActiveCount());
         }
       }
     });
 
-    // Message events
     sock.ev.on('messages.upsert', async (chatUpdate) => {
       try {
         const msg = chatUpdate.messages[0];
         if (!msg || !msg.message) return;
 
-        // Cache for antidelete
         cacheMessage(msg);
 
-        // Check if message is an edit
         if (await handleAntiedit(sock, msg)) return;
 
         const from = msg.key.remoteJid;
@@ -175,18 +172,15 @@ class BotManager {
         const isMe = msg.key.fromMe;
         const botNumber = cleanNumber;
 
-        // Auto read blue ticks if enabled
         const instanceSettings = await store.getInstanceSettings(botNumber);
         if (instanceSettings.autoRead && !isMe) {
           await sock.readMessages([msg.key]);
         }
 
-        // Auto typing presence if enabled
         if (instanceSettings.autoTyping && !isMe) {
           await sock.sendPresenceUpdate('composing', from);
         }
 
-        // Group checks
         let isSenderAdmin = false;
         let isBotAdmin = false;
 
@@ -195,7 +189,7 @@ class BotManager {
             const groupMetadata = await sock.groupMetadata(from);
             const participants = groupMetadata.participants || [];
             const botJid = `${botNumber}@s.whatsapp.net`;
-            
+
             const botParticipant = participants.find(p => p.id.split(':')[0] === botJid.split('@')[0] || p.id === botJid);
             isBotAdmin = botParticipant ? (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin') : false;
 
@@ -203,13 +197,11 @@ class BotManager {
             isSenderAdmin = senderParticipant ? (senderParticipant.admin === 'admin' || senderParticipant.admin === 'superadmin') : false;
           } catch (e) {}
 
-          // Handle antilink
           if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
             return;
           }
         }
 
-        // Extract message text
         const type = getContentType(msg.message);
         let body = '';
         if (type === 'conversation') {
@@ -224,16 +216,13 @@ class BotManager {
 
         if (!body) return;
 
-        // Determine prefix
         const prefix = instanceSettings.prefix || config.DEFAULT_PREFIX;
 
-        // If not a command, check chatbot
         if (!body.startsWith(prefix)) {
           await handleChatbot(sock, msg, from, sender, body, botNumber);
           return;
         }
 
-        // Command parsing
         const args = body.slice(prefix.length).trim().split(/ +/);
         const trigger = args.shift()?.toLowerCase();
         const text = args.join(' ');
@@ -241,19 +230,25 @@ class BotManager {
         const cmd = registry.find(trigger);
         if (!cmd) return;
 
-        // Safety rate limiting
         if (safety.isRateLimited(sender)) {
           return;
         }
 
-        // Permissions check
-        const isOwner = isMe || sender.replace(/[^0-9]/g, '') === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
+        // FIX: this was the exact bug flagged in the original project's own
+        // history doc. `sender` in a group is a participant JID like
+        // "923001234567:12@s.whatsapp.net" — the ":12" device suffix. The old
+        // code did `sender.replace(/[^0-9]/g, '')`, which keeps the "12" and
+        // glues it onto the number (923001234567 -> 92300123456712), so it
+        // could never equal OWNER_NUMBER. The owner's own commands would be
+        // silently ignored in groups. Strip everything after '@' and ':'
+        // first, then compare digits only.
+        const senderDigits = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
         if (instanceSettings.mode === 'private' && !isOwner) {
-          return; // Private mode: only owner can run commands
+          return;
         }
 
-        // Context object
         const ctx = {
           sock,
           msg,
@@ -276,7 +271,6 @@ class BotManager {
           }
         };
 
-        // Execute command
         await cmd.execute(ctx);
 
       } catch (err) {
@@ -284,7 +278,6 @@ class BotManager {
       }
     });
 
-    // Handle Antidelete protocol messages
     sock.ev.on('messages.update', async (updates) => {
       for (const update of updates) {
         if (update.update?.messageStubType === 68 || update.update?.message === null) {
