@@ -76,7 +76,12 @@ const commands = [
   },
   {
     name: 'audioeffect',
-    aliases: ['bass', 'slow', 'nightcore', 'deep', 'fast', 'robot'],
+    // FIX: queen-extra.js's .effects command advertises all 10 effects
+    // (bass, slow, nightcore, deep, fast, robot, reverse, smooth, blown,
+    // squirrel) but only 6 were registered as aliases here. Typing
+    // .reverse / .smooth / .blown / .squirrel returned "command not found"
+    // even though the bot was telling users those commands exist.
+    aliases: ['bass', 'slow', 'nightcore', 'deep', 'fast', 'robot', 'reverse', 'smooth', 'blown', 'squirrel'],
     description: 'Apply audio effects to voice note or audio',
     category: 'media',
     async execute(ctx) {
