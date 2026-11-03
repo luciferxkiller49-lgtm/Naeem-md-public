@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: true }));
 
 let mongoClient = null;
 
-// Specification endpoint 3: GET /active -> { count, limit }
+// GET /active -> { count, limit }
 app.get('/active', (req, res) => {
   const status = capacity.getStatus();
   res.json({
@@ -26,7 +26,7 @@ app.get('/active', (req, res) => {
   });
 });
 
-// Specification endpoint 3: GET /code?number=XXXX -> returns pairing code if count < 50
+// GET /code?number=XXXX -> pairing code if count < 50
 app.get(['/code', '/api/code', '/api/pair'], panelAuth, async (req, res) => {
   const number = req.query.number || req.query.phone;
 
@@ -39,7 +39,6 @@ app.get(['/code', '/api/code', '/api/pair'], panelAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid phone number format.' });
   }
 
-  // Check capacity limit: 50
   if (capacity.isFull() || botManager.getActiveCount() >= config.MAX_LIMIT) {
     return res.status(429).json({
       error: 'full',
@@ -68,7 +67,6 @@ app.get(['/code', '/api/code', '/api/pair'], panelAuth, async (req, res) => {
   }
 });
 
-// Root & Health check
 app.get(['/', '/health'], (req, res) => {
   res.json({
     bot: config.BOT_NAME,
@@ -81,7 +79,6 @@ app.get(['/', '/health'], (req, res) => {
   });
 });
 
-// Diagnostics endpoint (protected by panelAuth)
 app.get('/status', panelAuth, (req, res) => {
   const list = [];
   botManager.instances.forEach((inst, num) => {
@@ -96,22 +93,29 @@ app.get('/status', panelAuth, (req, res) => {
   });
 });
 
-// Initialize MongoDB and start bot service
+// FIX: previously, if MongoDB failed to connect the app still called
+// app.listen() and kept running with sessionsCol === null. The very first
+// /code request would then crash trying to read a property of null, with a
+// confusing error. This is a Mongo-only app (no local file sessions), so if
+// Mongo is unreachable there is nothing useful this dyno can do — exit so
+// Heroku restarts it instead of serving broken requests.
 async function start() {
-  if (config.MONGODB_URI) {
-    try {
-      console.log(`[INIT] Connecting to MongoDB...`);
-      mongoClient = new MongoClient(config.MONGODB_URI);
-      await mongoClient.connect();
-      const db = mongoClient.db('naeembot');
-      console.log(`[INIT] Connected to MongoDB database 'naeembot'.`);
+  if (!config.MONGODB_URI) {
+    console.error('[INIT] FATAL: MONGODB_URI not set.');
+    process.exit(1);
+  }
 
-      await botManager.init(db);
-    } catch (err) {
-      console.error(`[INIT] MongoDB connection failed:`, err.message);
-    }
-  } else {
-    console.warn(`[INIT] WARNING: MONGODB_URI not provided. Running in memory-only mode.`);
+  try {
+    console.log(`[INIT] Connecting to MongoDB...`);
+    mongoClient = new MongoClient(config.MONGODB_URI);
+    await mongoClient.connect();
+    const db = mongoClient.db('naeembot');
+    console.log(`[INIT] Connected to MongoDB database 'naeembot'.`);
+
+    await botManager.init(db);
+  } catch (err) {
+    console.error(`[INIT] MongoDB connection failed:`, err.message);
+    process.exit(1);
   }
 
   app.listen(config.PORT, () => {
