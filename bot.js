@@ -64,8 +64,21 @@ class BotManager {
   async startInstance(number, isNewPairing = false) {
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
-    if (this.instances.has(cleanNumber) && !isNewPairing) {
-      return this.instances.get(cleanNumber);
+    // FIX: this was the actual bug behind "pairing code works, phone shows
+    // loading, then 'could not link device' after ~1 minute". On a 515
+    // stream error (which happens routinely right after a pairing code is
+    // entered — see the connection.update handler below) we schedule a
+    // reconnect via startInstance(number, false), but we never remove the
+    // dead entry from `this.instances`. The old check here was
+    // `if (this.instances.has(cleanNumber) && !isNewPairing)`, which is
+    // true as soon as ANY entry exists for that number — including a
+    // disconnected one — so the scheduled reconnect just returned the
+    // stale, dead instance object and never opened a new WhatsApp socket at
+    // all. No new logs, no real reconnect, phone times out waiting.
+    // Only short-circuit if the existing instance is actually alive.
+    const existing = this.instances.get(cleanNumber);
+    if (existing && !isNewPairing && (existing.status === 'connecting' || existing.status === 'online')) {
+      return existing;
     }
 
     const { state, saveCreds, deleteSession } = await useMongoDBAuthState(
@@ -146,7 +159,14 @@ class BotManager {
         console.warn(`[BOT-MGR] Connection closed for +${cleanNumber} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
         if (shouldReconnect) {
-          setTimeout(() => this.startInstance(cleanNumber, false), 5000);
+          // FIX: added .catch() — previously a rejected promise here would
+          // have failed completely silently (no log at all), making this
+          // exact class of bug nearly impossible to diagnose from logs.
+          setTimeout(() => {
+            this.startInstance(cleanNumber, false).catch(err => {
+              console.error(`[BOT-MGR] Reconnect attempt failed for +${cleanNumber}:`, err.message);
+            });
+          }, 5000);
         } else {
           console.log(`[BOT-MGR] Session logged out for +${cleanNumber}. Purging...`);
           this.instances.delete(cleanNumber);
