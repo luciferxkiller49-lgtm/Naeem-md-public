@@ -29,38 +29,63 @@ const commands = [
   {
     name: 'menu',
     aliases: ['help', 'commands', 'list'],
-    description: 'Display all available bot commands by category',
+    description: 'Saare commands ki list dikhata hai',
     category: 'general',
     async execute(ctx) {
+      const fs = require('fs');
       const registry = require('../lib/loadCommands');
-      const allCmds = registry.getAll();
+      const store = require('../lib/store');
+      const { getUptimeText } = require('../lib/uptime');
+      const { channelContext, getMainChannel } = require('../lib/channel');
 
-      const categories = {};
-      allCmds.forEach(cmd => {
-        const cat = cmd.category || 'misc';
-        if (!categories[cat]) categories[cat] = [];
-        categories[cat].push(cmd.name);
+      const s = await store.getInstanceSettings(ctx.botNumber);
+      const botName = s.botName || config.BOT_NAME;
+      const ownerName = s.ownerName || config.OWNER_NAME;
+      const p = ctx.prefix;
+      const all = registry.getAll();
+
+      const LABELS = {
+        general: 'MAIN', downloader: 'DOWNLOAD', ownerself: 'OWNER', hack: 'HACK (prank only)',
+      };
+      const ORDER = ['MAIN', 'ISLAMIC', 'DOWNLOAD', 'GROUP', 'OWNER', 'MODERATION', 'SETTINGS', 'AI', 'UTILITY', 'FUN', 'MEDIA', 'MISC', 'HACK (prank only)'];
+      const cats = {};
+      for (const c of all) {
+        const key = LABELS[c.category] || String(c.category || 'misc').toUpperCase();
+        (cats[key] = cats[key] || []).push(c.name);
+      }
+      const keys = Object.keys(cats).sort((a, b) => {
+        const ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
       });
 
-      let menuText = `╭───『 *${config.BOT_NAME.toUpperCase()}* 』───\n` +
-        `│ 👑 *Owner:* ${config.OWNER_NAME}\n` +
-        `│ 🚀 *Node:* ${config.APP_ID} / 10\n` +
-        `│ ⚡ *Commands:* ${allCmds.length}\n` +
-        `│ 🔑 *Prefix:* ${ctx.prefix}\n` +
-        `╰─────────────────────\n\n`;
+      let text = `بِسْمِ اللّٰہِ الرَّحْمٰنِ الرَّحِیمِ\nاِیَّاکَ نَعۡبُدُ وَ اِیَّاکَ نَسۡتَعِیۡنُ☝️\n\n`;
+      text += `┌─── ❖\n│ 👑 Owner: ${ownerName}\n│ ⏱️ Uptime: ${getUptimeText()}\n`;
+      text += `│ 📜 Commands: ${all.length}\n│ 🌐 Mode: ${s.mode}\n│ 🚀 Node: ${config.APP_ID}\n└───📌\n\n*${botName}*\n\n`;
+      for (const k of keys) {
+        text += `╭───〔 ${k} MENU 〕───\n│\n`;
+        for (const n of cats[k]) text += `│ ⚡︎ ${p}${n}\n`;
+        text += `╰───────────────────────\n\n`;
+      }
+      const ch = await getMainChannel(ctx.sock);
+      if (ch?.url) text += `📢 Channel: ${ch.url}\n\n`;
+      text += `> ✨ Powered by ${ownerName} ✨`;
 
-      for (const cat in categories) {
-        menuText += `╭───『 *${cat.toUpperCase()}* 』───\n`;
-        categories[cat].forEach(name => {
-          menuText += `│ • ${ctx.prefix}${name}\n`;
-        });
-        menuText += `╰─────────────────────\n\n`;
+      const contextInfo = await channelContext(ctx.sock);
+      const base = fs.existsSync(config.menuImagePath)
+        ? { image: fs.readFileSync(config.menuImagePath), caption: text }
+        : { text };
+      if (contextInfo) base.contextInfo = contextInfo;
+      try {
+        await ctx.sock.sendMessage(ctx.from, base, { quoted: ctx.msg });
+      } catch (e) {
+        await ctx.sock.sendMessage(ctx.from, { text });
       }
 
-      menuText += `_Type ${ctx.prefix}help <command> for detailed info._\n` +
-        `_Powered by Naeemxlucifer Extreme Cluster_`;
-
-      await ctx.reply(menuText);
+      try {
+        if (fs.existsSync(config.menuVoicePath)) {
+          await ctx.sock.sendMessage(ctx.from, { audio: fs.readFileSync(config.menuVoicePath), mimetype: 'audio/ogg; codecs=opus', ptt: true });
+        }
+      } catch (e) {}
     }
   },
   {

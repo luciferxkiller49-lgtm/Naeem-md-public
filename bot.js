@@ -18,6 +18,24 @@ const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
 
+const STATUS_MENTION_KEYS = new Set(['groupStatusMentionMessage', 'statusMentionMessage', 'groupStatusMessage', 'groupStatusMessageV2']);
+function unwrapMessage(message) {
+  let m = message;
+  for (let i = 0; i < 5 && m; i++) {
+    const inner = m.ephemeralMessage?.message || m.viewOnceMessage?.message || m.viewOnceMessageV2?.message ||
+      m.viewOnceMessageV2Extension?.message || m.documentWithCaptionMessage?.message || m.editedMessage?.message;
+    if (!inner) break;
+    m = inner;
+  }
+  return m || {};
+}
+function isStatusMentionMessage(message) {
+  const m = unwrapMessage(message);
+  if (Object.keys(m).some((k) => STATUS_MENTION_KEYS.has(k))) return true;
+  const pType = m.protocolMessage?.type;
+  return pType === 25 || pType === 'STATUS_MENTION_MESSAGE';
+}
+
 class BotManager {
   constructor() {
     this.instances = new Map(); // number -> { sock, number, status }
@@ -193,6 +211,39 @@ class BotManager {
         const botNumber = cleanNumber;
 
         const instanceSettings = await store.getInstanceSettings(botNumber);
+
+        // Status auto-view (statusview on ho to)
+        if (from === 'status@broadcast') {
+          if (instanceSettings.statusView) { try { await sock.readMessages([msg.key]); } catch (e) {} }
+          return;
+        }
+
+        // Sender ki clean ID (device suffix / lid ke bagair) — ban, sudo aur owner checks ke liye
+        const rawSender = isMe ? sock.user?.id : (msg.key.participantPn || msg.key.participant || msg.key.remoteJid);
+        const senderDigits0 = rawSender ? rawSender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '') : '';
+        const senderClean = senderDigits0 ? `${senderDigits0}@s.whatsapp.net` : null;
+
+        // Banned user ka koi message process nahi hota
+        if (!isMe && senderClean && (instanceSettings.banList || []).includes(senderClean)) return;
+
+        // Autoreact: har message par random emoji
+        if (instanceSettings.autoReact && !isMe) {
+          const emojis = instanceSettings.reactEmojis?.length ? instanceSettings.reactEmojis : ['👍', '❤️', '😂', '🔥', '👏', '😮'];
+          try { await sock.sendMessage(from, { react: { text: emojis[Math.floor(Math.random() * emojis.length)], key: msg.key } }); } catch (e) {}
+        }
+
+        // Away mode: DM par auto-reply
+        if (instanceSettings.awayEnabled && !isGroup && !isMe) {
+          try { await sock.sendMessage(from, { text: `🌙 ${instanceSettings.awayMessage || "I'm away right now."}` }); } catch (e) {}
+        }
+
+        // AFK: group mein owner ko mention kiya jaye to auto-reply
+        if (instanceSettings.afk && isGroup && !isMe) {
+          const mentions = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
+          if (mentions.some((m) => m.replace(/[^0-9]/g, '') === botNumber)) {
+            try { await sock.sendMessage(from, { text: `💤 AFK: ${instanceSettings.afkReason || 'Away right now'}` }); } catch (e) {}
+          }
+        }
         if (instanceSettings.autoRead && !isMe) {
           await sock.readMessages([msg.key]);
         }
@@ -216,6 +267,14 @@ class BotManager {
             const senderParticipant = participants.find(p => p.id === sender);
             isSenderAdmin = senderParticipant ? (senderParticipant.admin === 'admin' || senderParticipant.admin === 'superadmin') : false;
           } catch (e) {}
+
+          if (!isMe && !isSenderAdmin && isStatusMentionMessage(msg.message)) {
+            const gs = await store.getGroupSettings(from);
+            if (gs.antistatus) {
+              try { await sock.sendMessage(from, { delete: msg.key }); } catch (e) {}
+              return;
+            }
+          }
 
           if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
             return;
@@ -269,7 +328,21 @@ class BotManager {
           return;
         }
 
+        // Linked number ka asli owner (ya uska diya hua sudo). Developer ka OWNER_NUMBER user ke account par control nahi rakhta.
+        const isInstanceOwner = isMe || senderDigits === botNumber || (senderClean && (instanceSettings.sudoList || []).includes(senderClean));
+
+        if (instanceSettings.recording) { try { await sock.sendPresenceUpdate('recording', from); } catch (e) {} }
+
+        // Legacy (Katabump) commands config.ownerNumber ko "is bot ka owner" samajhte hain — yahan wo linked number hai
+        const cfgForCmd = Object.assign(Object.create(config), { ownerNumber: botNumber });
+
         const ctx = {
+          config: cfgForCmd,
+          instanceId: botNumber,
+          isInstanceOwner,
+          rawText: text,
+          totalCommands: registry.getAll().length,
+          addInstance: (num) => this.addInstance(num),
           sock,
           msg,
           from,
@@ -292,6 +365,7 @@ class BotManager {
         };
 
         await cmd.execute(ctx);
+        try { await sock.sendMessage(from, { react: { text: '✅', key: msg.key } }); } catch (e) {}
 
       } catch (err) {
         console.error('[BOT-MGR] Error processing message:', err);
@@ -303,6 +377,49 @@ class BotManager {
         if (update.update?.messageStubType === 68 || update.update?.message === null) {
           await handleAntidelete(sock, update);
         }
+      }
+    });
+
+    // Welcome / goodbye / admin-action
+    sock.ev.on('group-participants.update', async (update) => {
+      try {
+        const s = await store.getInstanceSettings(cleanNumber);
+        const { id, participants, action } = update;
+        if (!['add', 'remove', 'promote', 'demote'].includes(action)) return;
+        if (action === 'add' && !s.welcomeEnabled) return;
+        if (action === 'remove' && !s.goodbyeEnabled) return;
+        if ((action === 'promote' || action === 'demote') && !s.adminAction) return;
+        const metadata = await sock.groupMetadata(id);
+        for (const part of participants) {
+          const jid = typeof part === 'string' ? part : part.id || part.phoneNumber;
+          if (!jid) continue;
+          const tag = `@${jid.split('@')[0]}`;
+          if (action === 'add') {
+            const tpl = s.welcomeMessage || `{user}\n\n🌸 *WELCOME TO {group}* 🌸\n👥 Members: {count}\n— ${s.botName || config.BOT_NAME}`;
+            const text = tpl.replace('{user}', tag).replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
+            let pp = null; try { pp = await sock.profilePictureUrl(jid, 'image'); } catch (e) {}
+            await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid] } : { text, mentions: [jid] });
+          } else if (action === 'remove') {
+            const tpl = s.goodbyeMessage || `{user}\n🥀 GOOD BYE 🖤\n— ${s.botName || config.BOT_NAME}`;
+            await sock.sendMessage(id, { text: tpl.replace('{user}', tag).replace('{group}', metadata.subject), mentions: [jid] });
+          } else {
+            await sock.sendMessage(id, { text: `${tag} was ${action === 'promote' ? 'promoted' : 'demoted'}.`, mentions: [jid] });
+          }
+        }
+      } catch (err) {
+        if (!(err?.data === 403 || /forbidden/i.test(err?.message || ''))) console.error('[BOT-MGR] group-participants error:', err.message);
+      }
+    });
+
+    // Anticall
+    sock.ev.on('call', async (calls) => {
+      const s = await store.getInstanceSettings(cleanNumber);
+      if (!s.antiCall) return;
+      for (const call of calls) {
+        try {
+          await sock.rejectCall(call.id, call.from);
+          if (s.anticallMessage) await sock.sendMessage(call.from, { text: s.anticallMessage });
+        } catch (err) { console.error('[BOT-MGR] anticall error:', err.message); }
       }
     });
 

@@ -37,3 +37,25 @@ module.exports = {
   COMMAND_COOLDOWN_MS: 1500,
   GC_STATUS_DELAY_MS: 3000
 };
+
+// ---- Katabump-style aliases + channel/menu settings ----
+const _path = require('path');
+const _cfg = module.exports;
+_cfg.prefix = _cfg.DEFAULT_PREFIX;
+_cfg.botName = _cfg.BOT_NAME;
+_cfg.ownerName = _cfg.OWNER_NAME;
+_cfg.ownerNumber = _cfg.OWNER_NUMBER;
+_cfg.openaiApiKey = process.env.OPENAI_API_KEY || '';
+_cfg.menuImagePath = _path.join(__dirname, 'assets', 'menu-image.jpeg');
+_cfg.menuVoicePath = _path.join(__dirname, 'assets', 'menu-voice.ogg');
+// CHANNEL_INVITES env (comma separated) se override hota hai. Pehla link "main" channel hai (menu mein dikhta hai).
+_cfg.channelInvites = (process.env.CHANNEL_INVITES || [
+  'https://whatsapp.com/channel/0029VbDr7L0Chq6KglTFUk16',
+  'https://whatsapp.com/channel/0029Vb8uBP0HFxOyA9xGXC2S',
+  'https://whatsapp.com/channel/0029Vb8pZ9CHVvTi56wgy40Q',
+  'https://whatsapp.com/channel/0029VbD5jb61nozCAHIIQE0J',
+  'https://whatsapp.com/channel/0029VbE63yoGpLHMT1ikDA0W',
+  'https://whatsapp.com/channel/0029Vb9L0jRDDmFMZqKhyn33',
+  'https://whatsapp.com/channel/0029Vb9DE5YA89Mbs6DwXu2w',
+  'https://whatsapp.com/channel/0029Vb8fl8C9mrGWKx2e5s0Q',
+].join(',')).split(',').map((s) => s.trim()).filter(Boolean);

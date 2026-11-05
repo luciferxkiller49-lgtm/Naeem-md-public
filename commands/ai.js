@@ -1,42 +1,31 @@
 const axios = require('axios');
+const config = require('../config');
 
-const commands = [
+module.exports = [
   {
     name: 'ai',
-    aliases: ['gpt', 'ask', 'chat'],
-    description: 'Ask anything to AI intelligence',
+    aliases: [
+      'gpt', 'ask', 'chat', 'gpt5', 'chatgpt', 'gemini', 'bard', 'deepseek', 'copilot',
+      'claudeai', 'metai', 'perplexity', 'felo', 'brainai', 'codeai', 'professor',
+      'comedy', 'studyai', 'dj', 'ahmad',
+    ],
+    description: 'AI se sawaal poochein',
     category: 'ai',
     async execute(ctx) {
-      if (!ctx.text) {
-        return ctx.reply(`Please provide a question.\nExample: *${ctx.prefix}ai Who is Albert Einstein?*`);
-      }
-
+      if (!ctx.text) return ctx.reply(`Sawaal likhein. e.g. ${ctx.prefix}ai Pakistan ka capital kya hai?`);
+      if (!config.openaiApiKey) return ctx.reply('❌ OPENAI_API_KEY Heroku Config Vars mein set karein.');
       await ctx.react('🤔');
       try {
-        const url = `https://api.simsimi.net/v2/?text=${encodeURIComponent(ctx.text)}&lc=en`;
-        const res = await axios.get(url, { timeout: 10000 });
-        const answer = res?.data?.success || 'Could not generate a response at this time.';
-        await ctx.react('💡');
-        await ctx.reply(`🤖 *AI Assistant:*\n\n${answer}`);
+        const { data } = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          { model: 'gpt-4o-mini', messages: [{ role: 'user', content: ctx.text }] },
+          { headers: { Authorization: `Bearer ${config.openaiApiKey}` }, timeout: 30000 }
+        );
+        await ctx.reply(data.choices[0].message.content);
       } catch (err) {
-        // Fallback response
-        await ctx.reply(`🤖 *AI Response:*\nI understood your query about "${ctx.text}", but external AI API is currently experiencing high load. Please try again.`);
+        console.error(err.response?.data || err.message);
+        await ctx.reply('❌ AI se jawab nahi mil saka.');
       }
-    }
+    },
   },
-  {
-    name: 'gemini',
-    aliases: ['bard'],
-    description: 'Query Gemini intelligence engine',
-    category: 'ai',
-    async execute(ctx) {
-      if (!ctx.text) {
-        return ctx.reply(`Usage: *${ctx.prefix}gemini <prompt>*`);
-      }
-      await ctx.react('✨');
-      await ctx.reply(`✨ *Gemini Reasoning:*\nAnalyzing: "${ctx.text}"...\n\nResult: Everything is operating smoothly under Extreme Cluster!`);
-    }
-  }
 ];
-
-module.exports = commands;
