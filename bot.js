@@ -204,7 +204,14 @@ class BotManager {
 
         if (await handleAntiedit(sock, msg)) return;
 
-        const from = msg.key.remoteJid;
+        // LID chat ID par reply bhejne se "not-acceptable" (406) aata hai — phone JID dhoondh kar use karte hain
+        let from = msg.key.remoteJid;
+        if (from.endsWith('@lid')) {
+          let pn = msg.key.remoteJidAlt;
+          if (!pn) { try { pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(from); } catch (e) {} }
+          if (!pn && msg.key.fromMe && sock.user?.id) pn = sock.user.id;
+          if (pn) from = `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
+        }
         const isGroup = from.endsWith('@g.us');
         const sender = isGroup ? (msg.key.participant || from) : from;
         const isMe = msg.key.fromMe;
@@ -357,10 +364,16 @@ class BotManager {
           isAdmin: isSenderAdmin,
           isBotAdmin,
           reply: async (replyText) => {
-            return await sock.sendMessage(from, { text: replyText }, { quoted: msg });
+            try {
+              return await sock.sendMessage(from, { text: replyText }, { quoted: msg });
+            } catch (e) {
+              // quoted message ya key problem ho to bina quote ke dobara try
+              return await sock.sendMessage(from, { text: replyText });
+            }
           },
           react: async (emoji) => {
-            return await sock.sendMessage(from, { react: { text: emoji, key: msg.key } });
+            try { return await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); }
+            catch (e) { return null; } // reaction sirf cosmetic hai, command na ruke
           }
         };
 
@@ -368,7 +381,7 @@ class BotManager {
         try { await sock.sendMessage(from, { react: { text: '✅', key: msg.key } }); } catch (e) {}
 
       } catch (err) {
-        console.error('[BOT-MGR] Error processing message:', err);
+        console.error('[BOT-MGR] Error processing message:', err?.message, '| chat:', chatUpdate?.messages?.[0]?.key?.remoteJid, '| alt:', chatUpdate?.messages?.[0]?.key?.remoteJidAlt);
       }
     });
 
