@@ -18,6 +18,15 @@ const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
 
+// Baileys ka version (v7 LID natively handle karta hai, purane version ko phone-number JID chahiye)
+let BAILEYS_VERSION = 'unknown';
+try {
+  const _p = require('path').join(require('path').dirname(require.resolve('@whiskeysockets/baileys')), '..', 'package.json');
+  BAILEYS_VERSION = JSON.parse(require('fs').readFileSync(_p, 'utf8')).version;
+} catch (e) {}
+const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
+console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
+
 const STATUS_MENTION_KEYS = new Set(['groupStatusMentionMessage', 'statusMentionMessage', 'groupStatusMessage', 'groupStatusMessageV2']);
 function unwrapMessage(message) {
   let m = message;
@@ -206,7 +215,7 @@ class BotManager {
 
         // LID chat ID par reply bhejne se "not-acceptable" (406) aata hai — phone JID dhoondh kar use karte hain
         let from = msg.key.remoteJid;
-        if (from.endsWith('@lid')) {
+        if (BAILEYS_MAJOR < 7 && from.endsWith('@lid')) {
           let pn = msg.key.remoteJidAlt;
           if (!pn) { try { pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(from); } catch (e) {} }
           if (!pn && msg.key.fromMe && sock.user?.id) pn = sock.user.id;
