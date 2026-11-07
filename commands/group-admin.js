@@ -1,5 +1,9 @@
 // Group admin commands: promote, demote, open, close, mute, unmute
 // Works with LID (new WhatsApp IDs) aur phone-number dono IDs ke saath.
+const { tinyBold } = require('../lib/font');
+
+// Har reply "tiny bold" style mein (links, @mentions, IDs apni shakal mein)
+const say = (sock, jid, text, extra = {}) => sock.sendMessage(jid, { text: tinyBold(text), ...extra });
 
 const userPart = (jid) => String(jid || '').split('@')[0].split(':')[0];
 
@@ -26,27 +30,27 @@ function botCandidates(sock) {
 async function guard(ctx) {
   const { sock, from, msg, isInstanceOwner } = ctx;
   if (!from.endsWith('@g.us')) {
-    await sock.sendMessage(from, { text: '❌ Ye command sirf group mein chalta hai.' });
+    await say(sock, from, '❌ This command only works in groups.');
     return null;
   }
   let meta;
   try {
     meta = await sock.groupMetadata(from);
   } catch (e) {
-    await sock.sendMessage(from, { text: '❌ Group ki maloomat nahi mil saki, dobara try karein.' });
+    await say(sock, from, '❌ Could not fetch group info, please try again.');
     return null;
   }
   const participants = meta.participants || [];
 
   const senderIsAdmin = senderCandidates(msg).some((j) => isAdminP(findParticipant(participants, j)));
   if (!isInstanceOwner && !senderIsAdmin) {
-    await sock.sendMessage(from, { text: '❌ Ye command sirf group admins ke liye hai.' });
+    await say(sock, from, '❌ Only group admins can use this command.');
     return null;
   }
 
   const botIsAdmin = botCandidates(sock).some((j) => isAdminP(findParticipant(participants, j)));
   if (!botIsAdmin) {
-    await sock.sendMessage(from, { text: '❌ Pehle bot ko group mein admin banayein, phir ye command chalegi.' });
+    await say(sock, from, '❌ Please make the bot an admin first.');
     return null;
   }
   return { meta, participants };
@@ -72,8 +76,8 @@ function targetJids(ctx) {
 
 function explain(err) {
   const m = String(err?.message || err);
-  if (/not-authorized|forbidden|403/i.test(m)) return 'Bot ke paas is kaam ki ijazat nahi (bot admin hona chahiye).';
-  if (/rate-overlimit|429/i.test(m)) return 'WhatsApp ne thori der ke liye rok diya, kuch der baad try karein.';
+  if (/not-authorized|forbidden|403/i.test(m)) return 'The bot needs to be an admin to do this.';
+  if (/rate-overlimit|429/i.test(m)) return 'WhatsApp rate limit reached, please try again later.';
   return m;
 }
 
@@ -85,19 +89,17 @@ async function changeRole(ctx, action) {
 
   const jids = targetJids(ctx);
   if (!jids.length) {
-    return sock.sendMessage(from, {
-      text: `${isPromote ? 'Kis ko admin banana hai' : 'Kis ka admin hatana hai'}? Us ka message reply karein ya @mention karein.\nMisal: ${prefix}${action} @user`,
-    });
+    return say(sock, from, `Reply to a user's message or mention them.\nExample: ${prefix}${action} @user`);
   }
 
   const doing = [];
   const notes = [];
   for (const j of jids) {
     const p = findParticipant(g.participants, j);
-    if (!p) { notes.push(`• ${j.split('@')[0]}: is group mein nahi hai`); continue; }
-    if (isPromote && isAdminP(p)) { notes.push(`• ${tag(p)}: pehle se admin hai`); continue; }
-    if (!isPromote && !isAdminP(p)) { notes.push(`• ${tag(p)}: admin nahi hai`); continue; }
-    if (!isPromote && p.admin === 'superadmin') { notes.push(`• ${tag(p)}: group creator ko demote nahi kar sakte`); continue; }
+    if (!p) { notes.push(`• ${j.split('@')[0]} is not in this group`); continue; }
+    if (isPromote && isAdminP(p)) { notes.push(`• ${tag(p)} is already an admin`); continue; }
+    if (!isPromote && !isAdminP(p)) { notes.push(`• ${tag(p)} is not an admin`); continue; }
+    if (!isPromote && p.admin === 'superadmin') { notes.push(`• ${tag(p)} is the group creator and cannot be demoted`); continue; }
     if (!doing.some((d) => d.id === p.id)) doing.push(p);
   }
 
@@ -106,15 +108,17 @@ async function changeRole(ctx, action) {
   if (doing.length) {
     try {
       await sock.groupParticipantsUpdate(from, doing.map((p) => p.id), action);
+      const who = doing.map(tag).join(', ');
+      const many = doing.length > 1;
       text += isPromote
-        ? `👑 ${doing.map(tag).join(', ')} ab group admin ${doing.length > 1 ? 'hain' : 'hai'}.`
-        : `⬇️ ${doing.map(tag).join(', ')} ab admin nahi ${doing.length > 1 ? 'rahe' : 'raha'}.`;
+        ? `👑 ${who} ${many ? 'are now admins' : 'is now an admin'}.`
+        : `⬇️ ${who} ${many ? 'are' : 'is'} no longer ${many ? 'admins' : 'an admin'}.`;
     } catch (err) {
-      text += `❌ ${isPromote ? 'Promote' : 'Demote'} nahi ho saka: ${explain(err)}`;
+      text += `❌ Could not ${action} the user: ${explain(err)}`;
     }
   }
   if (notes.length) text += `${text ? '\n\n' : ''}${notes.join('\n')}`;
-  await sock.sendMessage(from, { text, mentions });
+  await say(sock, from, text, { mentions });
 }
 
 async function setAnnounce(ctx, announce) {
@@ -122,19 +126,15 @@ async function setAnnounce(ctx, announce) {
   const g = await guard(ctx);
   if (!g) return;
   if (!!g.meta.announce === announce) {
-    return sock.sendMessage(from, {
-      text: announce ? '🔒 Group pehle se band hai (sirf admins message bhej sakte hain).' : '🔓 Group pehle se khula hai (sab message bhej sakte hain).',
-    });
+    return say(sock, from, announce ? '🔒 Group is already closed, only admins can send messages.' : '🔓 Group is already open, everyone can send messages.');
   }
   try {
     await sock.groupSettingUpdate(from, announce ? 'announcement' : 'not_announcement');
-    await sock.sendMessage(from, {
-      text: announce
-        ? '🔒 Group band kar diya gaya — ab sirf admins message bhej sakte hain.'
-        : '🔓 Group khol diya gaya — ab sab members message bhej sakte hain.',
-    });
+    await say(sock, from, announce
+      ? '🔒 Group is now closed, only admins can send messages.'
+      : '🔓 Group is now open, everyone can send messages.');
   } catch (err) {
-    await sock.sendMessage(from, { text: `❌ Group setting badal nahi saki: ${explain(err)}` });
+    await say(sock, from, `❌ Could not change group settings: ${explain(err)}`);
   }
 }
 
