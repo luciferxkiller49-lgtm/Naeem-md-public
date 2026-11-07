@@ -21,7 +21,7 @@ module.exports = {
   PANEL_KEY,
 
   // Bot Defaults
-  BOT_NAME: process.env.BOT_NAME || 'Naeemxlucifer-MD',
+  BOT_NAME: process.env.BOT_NAME || 'Naeem-MD',
   OWNER_NAME: process.env.OWNER_NAME || 'Naeem',
   OWNER_NUMBER: process.env.OWNER_NUMBER || '923000000000',
   DEFAULT_PREFIX: process.env.DEFAULT_PREFIX || '.',
@@ -30,7 +30,7 @@ module.exports = {
   MODE: process.env.MODE || 'public',
 
   // Sticker defaults
-  PACK_NAME: process.env.PACK_NAME || 'Naeemxlucifer-MD',
+  PACK_NAME: process.env.PACK_NAME || 'Naeem-MD',
   PACK_AUTHOR: process.env.PACK_AUTHOR || 'Extreme Edition',
 
   // Delays & Safety
