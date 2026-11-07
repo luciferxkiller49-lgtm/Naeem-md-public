@@ -68,7 +68,6 @@ const commands = [
       }
       const ch = await getMainChannel(ctx.sock);
       if (ch?.url) text += `📢 Channel: ${ch.url}\n\n`;
-      text += `> ✨ Powered by ${ownerName} ✨`;
 
       const contextInfo = await channelContext(ctx.sock);
       const base = fs.existsSync(config.menuImagePath)
