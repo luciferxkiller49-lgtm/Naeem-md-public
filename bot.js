@@ -7,6 +7,8 @@ const {
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const NodeCache = require('node-cache');
+const { signedSock } = require('./lib/signature');
+const { buildConnectMessage } = require('./lib/connectMessage');
 const config = require('./config');
 const logger = require('./lib/quietLogs');
 const { useMongoDBAuthState, getAppSessions } = require('./lib/mongoAuth');
@@ -187,12 +189,18 @@ class BotManager {
             await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
             const userJid = `${cleanNumber}@s.whatsapp.net`;
             const intro = await store.getIntro(cleanNumber);
-            const welcomeMsg = intro ||
-              `*${config.BOT_NAME} Connected!*\n` +
-              `• Node: #${config.APP_ID}\n` +
-              `• Prefix: ${config.DEFAULT_PREFIX}\n` +
-              `• Type *${config.DEFAULT_PREFIX}menu* to see available commands.`;
-            await sock.sendMessage(userJid, { text: welcomeMsg });
+            const built = buildConnectMessage({
+              number: cleanNumber,
+              prefix: s0.prefix || config.DEFAULT_PREFIX,
+              mode: s0.mode,
+              plugins: registry.getAll().length,
+            });
+            const caption = intro || built.text;
+            if (built.videoPath) {
+              await sock.sendMessage(userJid, { video: { url: built.videoPath }, mimetype: 'video/mp4', caption });
+            } else {
+              await sock.sendMessage(userJid, { text: caption });
+            }
           } else if (s0.connectedMsgSent === undefined) {
             // purane (pehle se linked) numbers: unhe dobara message nahi bhejna
             await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
@@ -376,6 +384,8 @@ class BotManager {
         // Legacy (Katabump) commands config.ownerNumber ko "is bot ka owner" samajhte hain — yahan wo linked number hai
         const cfgForCmd = Object.assign(Object.create(config), { ownerNumber: botNumber });
 
+        const cmdSock = signedSock(sock); // har jawab ke neeche signature
+
         const ctx = {
           config: cfgForCmd,
           instanceId: botNumber,
@@ -383,7 +393,7 @@ class BotManager {
           rawText: text,
           totalCommands: registry.getAll().length,
           addInstance: (num) => this.addInstance(num),
-          sock,
+          sock: cmdSock,
           msg,
           from,
           sender,
@@ -398,10 +408,10 @@ class BotManager {
           isBotAdmin,
           reply: async (replyText) => {
             try {
-              return await sock.sendMessage(from, { text: replyText }, { quoted: msg });
+              return await cmdSock.sendMessage(from, { text: replyText }, { quoted: msg });
             } catch (e) {
               // quoted message ya key problem ho to bina quote ke dobara try
-              return await sock.sendMessage(from, { text: replyText });
+              return await cmdSock.sendMessage(from, { text: replyText });
             }
           },
           react: async (emoji) => {
