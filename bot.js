@@ -6,6 +6,7 @@ const {
   getContentType
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
+const NodeCache = require('node-cache');
 const config = require('./config');
 const logger = require('./lib/quietLogs');
 const { useMongoDBAuthState, getAppSessions } = require('./lib/mongoAuth');
@@ -19,6 +20,17 @@ const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
 
 // Baileys ka version (v7 LID natively handle karta hai, purane version ko phone-number JID chahiye)
+// Group ki maloomat 5 minute yaad rakhte hain (har message par WhatsApp se dobara nahi maangte)
+const groupMetaCache = new NodeCache({ stdTTL: 300, checkperiod: 120, useClones: false });
+async function getGroupMeta(sock, jid) {
+  let meta = groupMetaCache.get(jid);
+  if (!meta) {
+    meta = await sock.groupMetadata(jid);
+    groupMetaCache.set(jid, meta);
+  }
+  return meta;
+}
+
 let BAILEYS_VERSION = 'unknown';
 try {
   const _p = require('path').join(require('path').dirname(require.resolve('@whiskeysockets/baileys')), '..', 'package.json');
@@ -123,7 +135,8 @@ class BotManager {
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
       markOnlineOnConnect: true,
-      generateHighQualityLinkPreview: false
+      generateHighQualityLinkPreview: false,
+      cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)
     });
 
     const instanceData = {
@@ -133,6 +146,10 @@ class BotManager {
       pairingCode: null
     };
     this.instances.set(cleanNumber, instanceData);
+
+    if (isNewPairing) {
+      try { await store.setInstanceSettings(cleanNumber, { connectedMsgSent: false }); } catch (e) {}
+    }
 
     let pairingPromise = null;
     if (isNewPairing && !sock.authState.creds.registered) {
@@ -163,16 +180,23 @@ class BotManager {
         // FIX: use getActiveCount() (see note in init())
         capacity.setCount(this.getActiveCount());
 
+        // "Connected" message sirf pehli baar (jab number naya link hota hai), har restart par nahi
         try {
-          const userJid = `${cleanNumber}@s.whatsapp.net`;
-          const intro = await store.getIntro(cleanNumber);
-          const welcomeMsg = intro ||
-            `*${config.BOT_NAME} Connected!*\n` +
-            `• Node: #${config.APP_ID}\n` +
-            `• Prefix: ${config.DEFAULT_PREFIX}\n` +
-            `• Type *${config.DEFAULT_PREFIX}menu* to see available commands.`;
-
-          await sock.sendMessage(userJid, { text: welcomeMsg });
+          const s0 = await store.getInstanceSettings(cleanNumber);
+          if (s0.connectedMsgSent === false) {
+            await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
+            const userJid = `${cleanNumber}@s.whatsapp.net`;
+            const intro = await store.getIntro(cleanNumber);
+            const welcomeMsg = intro ||
+              `*${config.BOT_NAME} Connected!*\n` +
+              `• Node: #${config.APP_ID}\n` +
+              `• Prefix: ${config.DEFAULT_PREFIX}\n` +
+              `• Type *${config.DEFAULT_PREFIX}menu* to see available commands.`;
+            await sock.sendMessage(userJid, { text: welcomeMsg });
+          } else if (s0.connectedMsgSent === undefined) {
+            // purane (pehle se linked) numbers: unhe dobara message nahi bhejna
+            await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
+          }
         } catch (e) {}
       }
 
@@ -273,7 +297,7 @@ class BotManager {
 
         if (isGroup) {
           try {
-            const groupMetadata = await sock.groupMetadata(from);
+            const groupMetadata = await getGroupMeta(sock, from);
             const participants = groupMetadata.participants || [];
             const botJid = `${botNumber}@s.whatsapp.net`;
 
@@ -387,7 +411,9 @@ class BotManager {
         };
 
         await cmd.execute(ctx);
-        try { await sock.sendMessage(from, { react: { text: '✅', key: msg.key } }); } catch (e) {}
+        if (process.env.REACT_ON_COMMAND === '1') {
+          try { await sock.sendMessage(from, { react: { text: '✅', key: msg.key } }); } catch (e) {}
+        }
 
       } catch (err) {
         console.error('[BOT-MGR] Error processing message:', err?.message, '| chat:', chatUpdate?.messages?.[0]?.key?.remoteJid, '| alt:', chatUpdate?.messages?.[0]?.key?.remoteJidAlt);
@@ -403,15 +429,18 @@ class BotManager {
     });
 
     // Welcome / goodbye / admin-action
+    sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u.id) groupMetaCache.del(u.id); });
     sock.ev.on('group-participants.update', async (update) => {
       try {
+        if (update?.id) groupMetaCache.del(update.id);
         const s = await store.getInstanceSettings(cleanNumber);
         const { id, participants, action } = update;
         if (!['add', 'remove', 'promote', 'demote'].includes(action)) return;
         if (action === 'add' && !s.welcomeEnabled) return;
         if (action === 'remove' && !s.goodbyeEnabled) return;
         if ((action === 'promote' || action === 'demote') && !s.adminAction) return;
-        const metadata = await sock.groupMetadata(id);
+        groupMetaCache.del(id);
+        const metadata = await getGroupMeta(sock, id);
         for (const part of participants) {
           const jid = typeof part === 'string' ? part : part.id || part.phoneNumber;
           if (!jid) continue;
