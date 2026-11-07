@@ -18,6 +18,7 @@ const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
 
+const selfSessionRefresh = new Map();
 const STATUS_MENTION_KEYS = new Set(['groupStatusMentionMessage', 'statusMentionMessage', 'groupStatusMessage', 'groupStatusMessageV2']);
 function unwrapMessage(message) {
   let m = message;
@@ -211,6 +212,15 @@ class BotManager {
           if (!pn) { try { pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(from); } catch (e) {} }
           if (!pn && msg.key.fromMe && sock.user?.id) pn = sock.user.id;
           if (pn) from = `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
+        }
+        // Self-chat: phone ke saath Signal session purani/kharab ho to reply "Waiting for this message" dikhata hai.
+        // Isliye self-chat mein har 10 minute baad own number ke sessions force-refresh karte hain.
+        if (from === `${cleanNumber}@s.whatsapp.net`) {
+          const last = selfSessionRefresh.get(cleanNumber) || 0;
+          if (Date.now() - last > 10 * 60 * 1000) {
+            selfSessionRefresh.set(cleanNumber, Date.now());
+            try { await sock.assertSessions([from], true); } catch (e) { console.error('[BOT-MGR] self session refresh failed:', e.message); }
+          }
         }
         const isGroup = from.endsWith('@g.us');
         const sender = isGroup ? (msg.key.participant || from) : from;
