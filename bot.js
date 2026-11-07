@@ -17,6 +17,8 @@ const capacity = require('./lib/capacity');
 const safety = require('./lib/safety');
 const registry = require('./lib/loadCommands');
 const { handleAntilink } = require('./lib/antilink');
+const { handleAntiFeatures } = require('./lib/antifeatures');
+const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
@@ -40,24 +42,6 @@ try {
 } catch (e) {}
 const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
 console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
-
-const STATUS_MENTION_KEYS = new Set(['groupStatusMentionMessage', 'statusMentionMessage', 'groupStatusMessage', 'groupStatusMessageV2']);
-function unwrapMessage(message) {
-  let m = message;
-  for (let i = 0; i < 5 && m; i++) {
-    const inner = m.ephemeralMessage?.message || m.viewOnceMessage?.message || m.viewOnceMessageV2?.message ||
-      m.viewOnceMessageV2Extension?.message || m.documentWithCaptionMessage?.message || m.editedMessage?.message;
-    if (!inner) break;
-    m = inner;
-  }
-  return m || {};
-}
-function isStatusMentionMessage(message) {
-  const m = unwrapMessage(message);
-  if (Object.keys(m).some((k) => STATUS_MENTION_KEYS.has(k))) return true;
-  const pType = m.protocolMessage?.type;
-  return pType === 25 || pType === 'STATUS_MENTION_MESSAGE';
-}
 
 class BotManager {
   constructor() {
@@ -241,8 +225,6 @@ class BotManager {
         const msg = chatUpdate.messages[0];
         if (!msg || !msg.message) return;
 
-        cacheMessage(msg);
-
         if (await handleAntiedit(sock, msg)) return;
 
         // LID chat ID par reply bhejne se "not-acceptable" (406) aata hai — phone JID dhoondh kar use karte hain
@@ -265,6 +247,9 @@ class BotManager {
           if (instanceSettings.statusView) { try { await sock.readMessages([msg.key]); } catch (e) {} }
           return;
         }
+
+        // Antidelete on ho tabhi message yaad rakhte hain
+        if (instanceSettings.antideleteOn) cacheMessage(msg);
 
         // Sender ki clean ID (device suffix / lid ke bagair) — ban, sudo aur owner checks ke liye
         const rawSender = isMe ? sock.user?.id : (msg.key.participantPn || msg.key.participant || msg.key.remoteJid);
@@ -307,22 +292,11 @@ class BotManager {
           try {
             const groupMetadata = await getGroupMeta(sock, from);
             const participants = groupMetadata.participants || [];
-            const botJid = `${botNumber}@s.whatsapp.net`;
-
-            const botParticipant = participants.find(p => p.id.split(':')[0] === botJid.split('@')[0] || p.id === botJid);
-            isBotAdmin = botParticipant ? (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin') : false;
-
-            const senderParticipant = participants.find(p => p.id === sender);
-            isSenderAdmin = senderParticipant ? (senderParticipant.admin === 'admin' || senderParticipant.admin === 'superadmin') : false;
+            isBotAdmin = botIsAdmin(participants, sock);
+            isSenderAdmin = senderIsAdmin(participants, msg);
           } catch (e) {}
 
-          if (!isMe && !isSenderAdmin && isStatusMentionMessage(msg.message)) {
-            const gs = await store.getGroupSettings(from);
-            if (gs.antistatus) {
-              try { await sock.sendMessage(from, { delete: msg.key }); } catch (e) {}
-              return;
-            }
-          }
+          if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
 
           if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
             return;
@@ -446,8 +420,11 @@ class BotManager {
         const s = await store.getInstanceSettings(cleanNumber);
         const { id, participants, action } = update;
         if (!['add', 'remove', 'promote', 'demote'].includes(action)) return;
-        if (action === 'add' && !s.welcomeEnabled) return;
-        if (action === 'remove' && !s.goodbyeEnabled) return;
+        if (action === 'add' || action === 'remove') {
+          const gs = await store.getGroupSettings(id);
+          if (action === 'add' && !gs.welcome) return;
+          if (action === 'remove' && !gs.goodbye) return;
+        }
         if ((action === 'promote' || action === 'demote') && !s.adminAction) return;
         groupMetaCache.del(id);
         const metadata = await getGroupMeta(sock, id);
