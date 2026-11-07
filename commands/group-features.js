@@ -86,8 +86,34 @@ module.exports = [
   modeCommand('antivideo', 'antivideo', 'Anti-video', 'videos'),
   modeCommand('antigcstatus', 'antigcstatus', 'Anti-group-status', 'group status posts (group stories)'),
   modeCommand('antimention', 'antimention', 'Anti-mention', 'status mentions of this group'),
-  toggleCommand('welcome', 'welcome', 'Welcome message', 'Welcome new members in this group (on/off)'),
-  toggleCommand('goodbye', 'goodbye', 'Goodbye message', 'Say goodbye when members leave this group (on/off)'),
+  toggleCommand('welcome', 'welcomeOn', 'Welcome message', 'Welcome new members in this group (on/off)'),
+  toggleCommand('goodbye', 'goodbyeOn', 'Goodbye message', 'Say goodbye when members leave this group (on/off)'),
+  {
+    name: 'antiedit',
+    aliases: ['antiedited'],
+    description: 'Notify when someone edits a message (group admins: this group, owner: private chats) on/off',
+    category: 'moderation',
+    async execute(ctx) {
+      const { sock, from, args, prefix, botNumber, isInstanceOwner } = ctx;
+      const opt = (args[0] || '').toLowerCase();
+      const inGroup = from.endsWith('@g.us');
+      let current;
+      if (inGroup) {
+        const g = await groupGuard(ctx);
+        if (!g) return;
+        current = (await store.getGroupSettings(from)).antieditOn;
+      } else {
+        if (!isInstanceOwner) return say(sock, from, '❌ Only the bot owner can use this command.');
+        current = (await store.getInstanceSettings(botNumber)).antieditOn;
+      }
+      if (opt !== 'on' && opt !== 'off') {
+        return say(sock, from, `✏️ Anti-edit is currently ${current ? 'ON' : 'OFF'}${inGroup ? ' in this group' : ' for your private chats'}.\nUsage: ${prefix}antiedit on / ${prefix}antiedit off`);
+      }
+      if (inGroup) await store.setGroupSettings(from, { antieditOn: opt === 'on' });
+      else await store.setInstanceSettings(botNumber, { antieditOn: opt === 'on' });
+      await say(sock, from, `✏️ Anti-edit is now ${opt.toUpperCase()}${inGroup ? ' in this group' : ' for your private chats'}.`);
+    },
+  },
   {
     // Purana combined command: ab do alag commands hain
     name: 'antistatus',

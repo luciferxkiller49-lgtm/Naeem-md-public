@@ -422,8 +422,8 @@ class BotManager {
         if (!['add', 'remove', 'promote', 'demote'].includes(action)) return;
         if (action === 'add' || action === 'remove') {
           const gs = await store.getGroupSettings(id);
-          if (action === 'add' && !gs.welcome) return;
-          if (action === 'remove' && !gs.goodbye) return;
+          if (action === 'add' && !gs.welcomeOn) return;
+          if (action === 'remove' && !gs.goodbyeOn) return;
         }
         if ((action === 'promote' || action === 'demote') && !s.adminAction) return;
         groupMetaCache.del(id);

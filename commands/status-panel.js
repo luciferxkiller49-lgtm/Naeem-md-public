@@ -28,15 +28,15 @@ module.exports = [
         try { name = (await sock.groupMetadata(from)).subject || name; } catch (e) {}
         lines.push(`${tinyBold('👥 Group:')} ${name}`, '');
         lines.push(
-          row('Welcome', gs.welcome),
-          row('Goodbye', gs.goodbye),
+          row('Welcome', gs.welcomeOn),
+          row('Goodbye', gs.goodbyeOn),
           row('Antilink', gs.antilink),
           row('Antivoice', gs.antivoice),
           row('Antisticker', gs.antisticker),
           row('Antivideo', gs.antivideo),
           row('Antigcstatus', gs.antigcstatus),
           row('Antimention', gs.antimention),
-          row('Antiedit', gs.antiedit),
+          row('Antiedit', gs.antieditOn),
         );
       }
 
@@ -46,6 +46,7 @@ module.exports = [
         lines.push(tinyBold('🤖 Bot'), '');
         lines.push(
           row('Antidelete', s.antideleteOn),
+          row('Antiedit (private chats)', s.antieditOn),
           row('Anticall', s.antiCall),
           row('Autoread', s.autoRead),
           row('Autoreact', s.autoReact),
