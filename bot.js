@@ -11,7 +11,8 @@ const { signedSock } = require('./lib/signature');
 const { buildConnectMessage } = require('./lib/connectMessage');
 const config = require('./config');
 const logger = require('./lib/quietLogs');
-const { useMongoDBAuthState, getAppSessions } = require('./lib/mongoAuth');
+const { useMongoDBAuthState, getAppSessions, purgeUnlinkedSessions } = require('./lib/mongoAuth');
+const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
 const capacity = require('./lib/capacity');
 const safety = require('./lib/safety');
@@ -43,11 +44,26 @@ try {
 const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
 console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
 
+// WhatsApp ka latest version har reconnect par internet se nahi mangwate — 6 ghante yaad rakhte hain
+let waVersionCache = null;
+async function getWaVersion() {
+  if (waVersionCache && Date.now() - waVersionCache.t < 6 * 60 * 60 * 1000) return waVersionCache.v;
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    waVersionCache = { t: Date.now(), v: version };
+    return version;
+  } catch (e) {
+    return waVersionCache ? waVersionCache.v : undefined;
+  }
+}
+
 class BotManager {
   constructor() {
     this.instances = new Map(); // number -> { sock, number, status }
     this.db = null;
     this.sessionsCol = null;
+    this.retries = new Map(); // number -> reconnect koshishon ki ginti
+    this.pairStart = new Map(); // number -> naye pairing ka waqt
   }
 
   async init(db) {
@@ -58,6 +74,7 @@ class BotManager {
     registry.load();
 
     console.log(`[BOT-MGR] Starting App Node #${config.APP_ID}...`);
+    await purgeUnlinkedSessions(this.sessionsCol, config.APP_ID);
     const savedNumbers = await getAppSessions(this.sessionsCol, config.APP_ID);
     console.log(`[BOT-MGR] Found ${savedNumbers.length} saved sessions for Node #${config.APP_ID}. Resuming...`);
 
@@ -112,10 +129,10 @@ class BotManager {
       config.APP_ID
     );
 
-    const { version } = await fetchLatestBaileysVersion();
+    const version = await getWaVersion();
 
     const sock = makeWASocket({
-      version,
+      ...(version ? { version } : {}),
       logger,
       printQRInTerminal: false,
       auth: state,
@@ -134,6 +151,7 @@ class BotManager {
     this.instances.set(cleanNumber, instanceData);
 
     if (isNewPairing) {
+      this.pairStart.set(cleanNumber, Date.now());
       try { await store.setInstanceSettings(cleanNumber, { connectedMsgSent: false }); } catch (e) {}
     }
 
@@ -165,6 +183,9 @@ class BotManager {
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
         // FIX: use getActiveCount() (see note in init())
         capacity.setCount(this.getActiveCount());
+
+        this.retries.delete(cleanNumber);
+        this.pairStart.delete(cleanNumber);
 
         // "Connected" message sirf pehli baar (jab number naya link hota hai), har restart par nahi
         try {
@@ -198,21 +219,29 @@ class BotManager {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        const paired = !!(sock.authState.creds.registered || sock.authState.creds.me?.id);
+        const giveUp = !loggedOut && shouldGiveUp({ paired, statusCode, pairStartedAt: this.pairStart.get(cleanNumber) });
+        const shouldReconnect = !loggedOut && !giveUp;
         console.warn(`[BOT-MGR] Connection closed for +${cleanNumber} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
         if (shouldReconnect) {
-          // FIX: added .catch() — previously a rejected promise here would
-          // have failed completely silently (no log at all), making this
-          // exact class of bug nearly impossible to diagnose from logs.
+          // Pehli koshish 5s baad, phir 10s, 20s, 40s, 60s (baar baar ek dam reconnect nahi)
+          const attempt = (this.retries.get(cleanNumber) || 0) + 1;
+          this.retries.set(cleanNumber, attempt);
+          const delay = nextDelay(attempt, statusCode);
           setTimeout(() => {
             this.startInstance(cleanNumber, false).catch(err => {
               console.error(`[BOT-MGR] Reconnect attempt failed for +${cleanNumber}:`, err.message);
             });
-          }, 5000);
+          }, delay);
         } else {
-          console.log(`[BOT-MGR] Session logged out for +${cleanNumber}. Purging...`);
+          console.log(giveUp
+            ? `[BOT-MGR] +${cleanNumber} never finished linking. Removing it (no more reconnects).`
+            : `[BOT-MGR] Session logged out for +${cleanNumber}. Purging...`);
           this.instances.delete(cleanNumber);
+          this.retries.delete(cleanNumber);
+          this.pairStart.delete(cleanNumber);
           await deleteSession();
           // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
