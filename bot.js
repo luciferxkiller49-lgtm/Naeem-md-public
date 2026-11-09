@@ -19,6 +19,7 @@ const safety = require('./lib/safety');
 const registry = require('./lib/loadCommands');
 const { handleAntilink } = require('./lib/antilink');
 const { handleAntiFeatures } = require('./lib/antifeatures');
+const bulkCache = require('./lib/bulkCache');
 const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
@@ -395,6 +396,12 @@ class BotManager {
             isBotAdmin = botIsAdmin(participants, sock);
             isSenderAdmin = senderIsAdmin(participants, msg);
           } catch (e) {}
+
+          // .delalllink / .delallstatus ke liye — antilink/antigcstatus ON
+          // ho ya na ho, har group-status aur link wale message ka key yaad
+          // rakh lete hain taake baad mein ek command se sab sath delete ho
+          // saken.
+          bulkCache.record(from, msg);
 
           if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
 
