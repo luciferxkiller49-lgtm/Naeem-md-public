@@ -5,6 +5,7 @@ const config = require('./config');
 const botManager = require('./bot');
 const panelAuth = require('./lib/panelAuth');
 const capacity = require('./lib/capacity');
+const memlog = require('./lib/memlog');
 
 const app = express();
 app.use(cors());
@@ -48,6 +49,10 @@ app.get(['/code', '/api/code', '/api/pair'], panelAuth, async (req, res) => {
     });
   }
 
+  if (!botManager.ready) {
+    return res.status(503).json({ error: 'starting', message: 'This node is still starting, try again in a few seconds.' });
+  }
+
   try {
     console.log(`[API] Generating pairing code for +${cleanNumber} on Node #${config.APP_ID}...`);
     const result = await botManager.addInstance(cleanNumber);
@@ -75,6 +80,7 @@ app.get(['/', '/health'], (req, res) => {
     status: 'online',
     activeSessions: botManager.getActiveCount(),
     limit: config.MAX_LIMIT,
+    memory: memlog.snapshot(botManager.getActiveCount()),
     uptime: Math.floor(process.uptime())
   });
 });
@@ -112,19 +118,21 @@ async function start() {
     const db = mongoClient.db('naeembot');
     console.log(`[INIT] Connected to MongoDB database 'naeembot'.`);
 
+    // PEHLE port par sunna shuru (Heroku boot timeout se bachne ke liye), phir numbers resume hote hain
+    app.listen(config.PORT, () => {
+      console.log(`====================================================`);
+      console.log(`  NAEEMXLUCIFER-MD BOT NODE #${config.APP_ID} RUNNING`);
+      console.log(`  Port: ${config.PORT}`);
+      console.log(`  Max Limit: ${config.MAX_LIMIT} Numbers`);
+      console.log(`====================================================`);
+    });
+
+    memlog.start(() => botManager.getActiveCount());
     await botManager.init(db);
   } catch (err) {
-    console.error(`[INIT] MongoDB connection failed:`, err.message);
+    console.error(`[INIT] Startup failed:`, err.message);
     process.exit(1);
   }
-
-  app.listen(config.PORT, () => {
-    console.log(`====================================================`);
-    console.log(`  NAEEMXLUCIFER-MD BOT NODE #${config.APP_ID} RUNNING`);
-    console.log(`  Port: ${config.PORT}`);
-    console.log(`  Max Limit: ${config.MAX_LIMIT} Numbers`);
-    console.log(`====================================================`);
-  });
 }
 
 start();
