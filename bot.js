@@ -62,6 +62,7 @@ class BotManager {
     this.instances = new Map(); // number -> { sock, number, status }
     this.db = null;
     this.sessionsCol = null;
+    this.ready = false; // setup mukammal (ab /code requests le sakte hain)
     this.retries = new Map(); // number -> reconnect koshishon ki ginti
     this.pairStart = new Map(); // number -> naye pairing ka waqt
   }
@@ -78,19 +79,30 @@ class BotManager {
     const savedNumbers = await getAppSessions(this.sessionsCol, config.APP_ID);
     console.log(`[BOT-MGR] Found ${savedNumbers.length} saved sessions for Node #${config.APP_ID}. Resuming...`);
 
-    for (const num of savedNumbers) {
+    this.ready = true;
+
+    // Purane numbers peeche background mein ek ek karke jodte hain.
+    // Pehle ye sab pehle hota tha aur server tab tak port par sunta hi nahi tha — Heroku 60 second mein
+    // port na milne par process ko SIGKILL kar deta hai (boot timeout).
+    this.resumeAll(savedNumbers).catch((err) => console.error('[BOT-MGR] resumeAll failed:', err.message));
+  }
+
+  async resumeAll(numbers) {
+    const gap = parseInt(process.env.RESUME_GAP_MS || '2500', 10);
+    for (const num of numbers) {
       try {
-        await this.startInstance(num, false);
+        // Ek atka hua number baqi sab ko na rok sake: 45 second ka hadd
+        await Promise.race([
+          this.startInstance(num, false),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('start timed out after 45s')), 45000)),
+        ]);
       } catch (err) {
         console.error(`[BOT-MGR] Failed to resume session ${num}:`, err.message);
       }
+      await new Promise((r) => setTimeout(r, gap)); // CPU/memory ka achanak spike nahi
     }
-
-    // FIX: was `capacity.setCount(this.instances.size)` here, which counts
-    // sockets that are still 'connecting' as if they were live. /active (in
-    // server.js) reports getActiveCount() (only 'online'). Using the same
-    // metric here keeps the panel's capacity view and /active in agreement.
     capacity.setCount(this.getActiveCount());
+    console.log(`[BOT-MGR] Resume finished for ${numbers.length} session(s).`);
   }
 
   async addInstance(number) {
@@ -138,6 +150,9 @@ class BotManager {
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
       markOnlineOnConnect: true,
+      // Purani chats ki history download nahi karte (memory aur CPU bachti hai; commands ke liye zaroori nahi)
+      syncFullHistory: false,
+      shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
       cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)
     });
