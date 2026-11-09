@@ -65,6 +65,7 @@ class BotManager {
     this.ready = false; // setup mukammal (ab /code requests le sakte hain)
     this.retries = new Map(); // number -> reconnect koshishon ki ginti
     this.pairStart = new Map(); // number -> naye pairing ka waqt
+    this.reconnectTimers = new Map(); // number -> pending setTimeout handle (naya pairing shuru karte waqt cancel karne ke liye)
   }
 
   async init(db) {
@@ -135,6 +136,28 @@ class BotManager {
       return existing;
     }
 
+    // FIX (asli wajah "pairing bohot mushkil, phir koi reply nahi"): agar
+    // isNewPairing true hai (yani .menu panel se /code manga gaya) aur isi
+    // number ka ek purana socket pehle se zinda/pending hai (chahe wo
+    // resumeAll() se resume hua ho ya ek purani reconnect attempt ho), to
+    // use band kiye baghair bilkul naya socket khol dena WhatsApp ko "do
+    // devices, ek hi number" nazar aata hai. WhatsApp foran dono ko
+    // "conflict: device_removed" (401) de kar kaat deta hai — isi liye
+    // pairing baar baar fail hoti thi aur connection kabhi stable nahi hota
+    // tha. Naya pairing shuru karne se pehle purane socket ko saaf tarah
+    // band karte hain aur us ka pending reconnect timer bhi cancel karte
+    // hain, taake purana socket thori der baad wapas na uth aaye.
+    if (existing && isNewPairing) {
+      const pendingTimer = this.reconnectTimers.get(cleanNumber);
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        this.reconnectTimers.delete(cleanNumber);
+      }
+      try { existing.sock?.ev?.removeAllListeners?.(); } catch (e) {}
+      try { existing.sock?.end?.(new Error('Replaced by new pairing request')); } catch (e) {}
+      this.instances.delete(cleanNumber);
+    }
+
     const { state, saveCreds, deleteSession } = await useMongoDBAuthState(
       this.sessionsCol,
       cleanNumber,
@@ -201,12 +224,13 @@ class BotManager {
 
         this.retries.delete(cleanNumber);
         this.pairStart.delete(cleanNumber);
+        const t = this.reconnectTimers.get(cleanNumber);
+        if (t) { clearTimeout(t); this.reconnectTimers.delete(cleanNumber); }
 
         // "Connected" message sirf pehli baar (jab number naya link hota hai), har restart par nahi
         try {
           const s0 = await store.getInstanceSettings(cleanNumber);
           if (s0.connectedMsgSent === false) {
-            await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
             const userJid = `${cleanNumber}@s.whatsapp.net`;
             const intro = await store.getIntro(cleanNumber);
             const built = buildConnectMessage({
@@ -221,6 +245,13 @@ class BotManager {
             } else {
               await sock.sendMessage(userJid, { text: caption });
             }
+            // FIX: pehle ye flag sendMessage se PEHLE true kar diya jata
+            // tha. Agar bhejte waqt connection toot jaye (jaisa upar wale
+            // "device_removed" conflict ki wajah se ho raha tha), flag phir
+            // bhi hamesha ke liye true reh jata — aur agli baar connection
+            // sach mein stable hone par bhi ye "connected" message kabhi
+            // nahi aata. Ab flag sirf successful send ke baad set hota hai.
+            await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
           } else if (s0.connectedMsgSent === undefined) {
             // purane (pehle se linked) numbers: unhe dobara message nahi bhejna
             await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
@@ -245,11 +276,13 @@ class BotManager {
           const attempt = (this.retries.get(cleanNumber) || 0) + 1;
           this.retries.set(cleanNumber, attempt);
           const delay = nextDelay(attempt, statusCode);
-          setTimeout(() => {
+          const timer = setTimeout(() => {
+            this.reconnectTimers.delete(cleanNumber);
             this.startInstance(cleanNumber, false).catch(err => {
               console.error(`[BOT-MGR] Reconnect attempt failed for +${cleanNumber}:`, err.message);
             });
           }, delay);
+          this.reconnectTimers.set(cleanNumber, timer);
         } else {
           console.log(giveUp
             ? `[BOT-MGR] +${cleanNumber} never finished linking. Removing it (no more reconnects).`
@@ -257,6 +290,8 @@ class BotManager {
           this.instances.delete(cleanNumber);
           this.retries.delete(cleanNumber);
           this.pairStart.delete(cleanNumber);
+          const t2 = this.reconnectTimers.get(cleanNumber);
+          if (t2) { clearTimeout(t2); this.reconnectTimers.delete(cleanNumber); }
           await deleteSession();
           // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
