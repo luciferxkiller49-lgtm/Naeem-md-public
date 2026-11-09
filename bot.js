@@ -303,31 +303,33 @@ class BotManager {
         // Banned user ka koi message process nahi hota
         if (!isMe && senderClean && (instanceSettings.banList || []).includes(senderClean)) return;
 
-        // Autoreact: har message par random emoji
+        // FIX (late reply): ye 5 optional side-effects (autoReact, away,
+        // afk, autoRead, autoTyping) ek doosre par depend nahi karte, lekin
+        // pehle ek ke baad ek `await` hoti thin — matlab agar sab ON hon to
+        // command ka jawab in paanchon WhatsApp network calls ke mukammal
+        // khatam hone tak rukta tha. Ab ye saath (parallel) chalte hain, to
+        // jo bhi sab se tez wapas aaye uska intezar sab ke liye nahi hota.
+        const sideEffects = [];
         if (instanceSettings.autoReact && !isMe) {
           const emojis = instanceSettings.reactEmojis?.length ? instanceSettings.reactEmojis : ['👍', '❤️', '😂', '🔥', '👏', '😮'];
-          try { await sock.sendMessage(from, { react: { text: emojis[Math.floor(Math.random() * emojis.length)], key: msg.key } }); } catch (e) {}
+          sideEffects.push(sock.sendMessage(from, { react: { text: emojis[Math.floor(Math.random() * emojis.length)], key: msg.key } }).catch(() => {}));
         }
-
-        // Away mode: DM par auto-reply
         if (instanceSettings.awayEnabled && !isGroup && !isMe) {
-          try { await sock.sendMessage(from, { text: `🌙 ${instanceSettings.awayMessage || "I'm away right now."}` }); } catch (e) {}
+          sideEffects.push(sock.sendMessage(from, { text: `🌙 ${instanceSettings.awayMessage || "I'm away right now."}` }).catch(() => {}));
         }
-
-        // AFK: group mein owner ko mention kiya jaye to auto-reply
         if (instanceSettings.afk && isGroup && !isMe) {
           const mentions = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
           if (mentions.some((m) => m.replace(/[^0-9]/g, '') === botNumber)) {
-            try { await sock.sendMessage(from, { text: `💤 AFK: ${instanceSettings.afkReason || 'Away right now'}` }); } catch (e) {}
+            sideEffects.push(sock.sendMessage(from, { text: `💤 AFK: ${instanceSettings.afkReason || 'Away right now'}` }).catch(() => {}));
           }
         }
         if (instanceSettings.autoRead && !isMe) {
-          await sock.readMessages([msg.key]);
+          sideEffects.push(sock.readMessages([msg.key]).catch(() => {}));
         }
-
         if (instanceSettings.autoTyping && !isMe) {
-          await sock.sendPresenceUpdate('composing', from);
+          sideEffects.push(sock.sendPresenceUpdate('composing', from).catch(() => {}));
         }
+        if (sideEffects.length) await Promise.all(sideEffects);
 
         let isSenderAdmin = false;
         let isBotAdmin = false;
