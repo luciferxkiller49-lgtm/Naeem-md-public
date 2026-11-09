@@ -66,6 +66,7 @@ class BotManager {
     this.retries = new Map(); // number -> reconnect koshishon ki ginti
     this.pairStart = new Map(); // number -> naye pairing ka waqt
     this.reconnectTimers = new Map(); // number -> pending setTimeout handle (naya pairing shuru karte waqt cancel karne ke liye)
+    this.pairingPromises = new Map(); // number -> abhi chal rahi pairing request (duplicate /code calls ko takrane se bachane ke liye)
   }
 
   async init(db) {
@@ -113,7 +114,25 @@ class BotManager {
       throw new Error(`Node #${config.APP_ID} has reached maximum capacity (${config.MAX_LIMIT}).`);
     }
 
-    return await this.startInstance(cleanNumber, true);
+    // FIX (naya masla jo is baar ke logs mein mila): agar /code ka pehla
+    // request WhatsApp se jawab aane mein der laga de, Heroku ka router 30
+    // second mein H12 de kar haar maan leta hai — lekin server ke andar
+    // pehli koshish abhi bhi chal rahi hoti hai! Jab panel (ya user) foran
+    // dobara /code try karta hai, pehli wali abhi tak zinda hoti hai, aur
+    // ab 2 alag "requestPairingCode" calls ek hi number ke liye WhatsApp ko
+    // ek saath jati hain — WhatsApp ise conflict samajh kar turant
+    // "device_removed" (401) de deta hai. Isi liye code mil jata lekin
+    // 2-3 second baad hi session purge ho jata.
+    // Ab agar isi number ki ek pairing request pehle se chal rahi ho, to
+    // nayi shuru karne ke bajaye wahi purani (in-flight) wapas kar dete hain.
+    const inFlight = this.pairingPromises.get(cleanNumber);
+    if (inFlight) return inFlight;
+
+    const p = this.startInstance(cleanNumber, true).finally(() => {
+      this.pairingPromises.delete(cleanNumber);
+    });
+    this.pairingPromises.set(cleanNumber, p);
+    return p;
   }
 
   async startInstance(number, isNewPairing = false) {
@@ -543,8 +562,23 @@ class BotManager {
     });
 
     if (pairingPromise) {
-      const code = await pairingPromise;
-      return { code, number: cleanNumber, status: instanceData.status };
+      // FIX: pehle ye hamesha ke liye wait karta tha. Agar WhatsApp jawab
+      // na de to request Heroku ke 30s H12 ke baad bhi background mein
+      // latki rehti — aur agli koshish se takra jati (upar addInstance ka
+      // note dekhein). Ab 20 second ke andar jawab na aaye to foran saaf
+      // error dete hain aur adhoora socket band kar dete hain.
+      try {
+        const code = await Promise.race([
+          pairingPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('WhatsApp se pairing code lene mein 20s se zyada lag gaye. Dobara koshish karein.')), 20000)),
+        ]);
+        return { code, number: cleanNumber, status: instanceData.status };
+      } catch (err) {
+        try { sock.ev.removeAllListeners(); } catch (e) {}
+        try { sock.end(err); } catch (e) {}
+        this.instances.delete(cleanNumber);
+        throw err;
+      }
     }
 
     return instanceData;
