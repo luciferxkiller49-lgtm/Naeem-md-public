@@ -26,3 +26,10 @@
 - Naye commands (`commands/bulk-delete.js`): `.dellink` (link wale messages) aur `.delstory` (group status posts) — group admin chalaye, bot admin ho.
   Purane naam (`.delalllink`, `.delallstatus` waghera) aliases ke taur par chalte hain. Ye pehle kisi file se load hi nahi hote the (`lib/moderation.js` orphan thi, hata di).
 - Limit: bot sirf wahi messages delete kar sakta hai jo usne online rehte hue dekhe hon (restart par list khali).
+
+## Update 3 (anti-link / anti-feature)
+- Delete par koi message nahi jata (delete / all mode). Member remove hone par SIRF ek message jata hai jis mein wajah likhi hoti hai
+  (`lib/removeNotice.js`). Spammer ke queue mein pade baqi messages par dobara kick/message nahi hota (2 min dedupe). Kick fail (admin/owner) ho to galat "removed" message nahi jata.
+  Ye antilink aur antivoice/antisticker/antivideo/antigcstatus/antimention sab par lagu hai.
+- BUG FIX: `antilink all` mode mein regex par `g` flag tha, is se har doosra link miss ho jata tha (6 mein se sirf 3 pakde jate the). Hata diya.
+- Har deleted link par `[ANTILINK] Detected...` log line band (100 links = 100 log lines thi).
