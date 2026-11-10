@@ -16,6 +16,7 @@ async function extractViewOnce(sock, msg) {
   const imageMsg = target?.imageMessage;
   const videoMsg = target?.videoMessage;
   if (!imageMsg && !videoMsg) return null;
+  if (!(imageMsg || videoMsg).mediaKey?.length) return null; // media key khali (pehle hi khul chuka / purana) — download mumkin nahi
   try {
     const buffer = await downloadMediaMessage(
       { key: msg.key, message: target },

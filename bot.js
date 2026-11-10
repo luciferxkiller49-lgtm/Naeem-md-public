@@ -442,6 +442,9 @@ class BotManager {
               return;
             }
           }
+        } else if (isMe) {
+          // Private chat: sirf owner ke apne bheje link/status yaad rakhte hain (.dellink / .delstory usi chat mein)
+          bulkCache.record(from, msg);
         }
 
         if (!body) return;
