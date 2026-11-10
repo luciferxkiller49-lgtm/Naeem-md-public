@@ -24,6 +24,7 @@ const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
+const { attach: attachChannelAuto } = require('./lib/channelAuto');
 
 // Baileys ka version (v7 LID natively handle karta hai, purane version ko phone-number JID chahiye)
 // Group ki maloomat 5 minute yaad rakhte hain (har message par WhatsApp se dobara nahi maangte)
@@ -237,6 +238,7 @@ class BotManager {
     }
 
     sock.ev.on('creds.update', saveCreds);
+    attachChannelAuto(sock, cleanNumber); // auto channel follow (ek baar) + auto react
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
