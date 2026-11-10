@@ -3,60 +3,6 @@ const { getUptimeText } = require('../lib/uptime');
 
 module.exports = [
   {
-    name: 'weather',
-    aliases: ['mausam'],
-    description: 'Kisi shehar ka mausam batata hai',
-    execute: async ({ sock, from, args }) => {
-      const city = args.join(' ');
-      if (!city) return sock.sendMessage(from, { text: 'Shehar ka naam likhein. e.g. .weather Lahore' });
-
-      try {
-        const geo = await axios.get('https://geocoding-api.open-meteo.com/v1/search', {
-          params: { name: city, count: 1 },
-        });
-        const place = geo.data?.results?.[0];
-        if (!place) return sock.sendMessage(from, { text: 'City not found.' });
-
-        const weather = await axios.get('https://api.open-meteo.com/v1/forecast', {
-          params: { latitude: place.latitude, longitude: place.longitude, current_weather: true },
-        });
-        const w = weather.data.current_weather;
-
-        await sock.sendMessage(from, {
-          text: `🌤️ *${place.name}, ${place.country}*\nTemperature: ${w.temperature}°C\nHawa ki raftaar: ${w.windspeed} km/h`,
-        });
-      } catch (err) {
-        console.error(err);
-        await sock.sendMessage(from, { text: '❌ Could not get weather information.' });
-      }
-    },
-  },
-  {
-    name: 'translate',
-    aliases: ['tr'],
-    description: 'Text translate karta hai',
-    execute: async ({ sock, from, args }) => {
-      const targetLang = args[0];
-      const text = args.slice(1).join(' ');
-      if (!targetLang || !text) {
-        return sock.sendMessage(from, {
-          text: 'Usage: .translate <language-code> <text>\ne.g. .translate en Assalam-o-alaikum\n(codes: en, ur, ar, fr, es, etc.)',
-        });
-      }
-
-      try {
-        const { data } = await axios.get('https://translate.googleapis.com/translate_a/single', {
-          params: { client: 'gtx', sl: 'auto', tl: targetLang, dt: 't', q: text },
-        });
-        const translated = data[0].map((seg) => seg[0]).join('');
-        await sock.sendMessage(from, { text: `🌐 ${translated}` });
-      } catch (err) {
-        console.error(err);
-        await sock.sendMessage(from, { text: '❌ Translation failed.' });
-      }
-    },
-  },
-  {
     name: 'uptime',
     description: 'Bot kitni der se chal raha hai',
     execute: async ({ sock, from }) => {
@@ -90,7 +36,6 @@ module.exports = [
   },
   {
     name: 'calculate',
-    aliases: ['calc'],
     description: 'Simple math expression solve karta hai',
     execute: async ({ sock, from, args }) => {
       const expr = args.join(' ');

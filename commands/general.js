@@ -37,7 +37,7 @@ const commands = [
   },
   {
     name: 'alive',
-    aliases: ['status', 'uptime'],
+    aliases: ['uptime'],
     description: 'Display bot status and cluster connection health',
     category: 'general',
     async execute(ctx) {

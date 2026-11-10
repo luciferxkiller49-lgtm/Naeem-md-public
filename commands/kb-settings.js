@@ -90,31 +90,11 @@ module.exports = [
       return sock.sendMessage(from, { text: `Away is currently ${onOff(s.awayEnabled)}.\nFormat: .away on <message> / .away off` });
     },
   },
-  {
-    name: 'antistatus',
-    description: 'Group mein non-admin ke status-mention messages delete karta hai (admin only)',
-    async execute({ sock, msg, from, args, isInstanceOwner }) {
-      const sub = args[0]?.toLowerCase();
-      if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: 'This command only works in groups.' });
-      const sender = msg.key.participant || msg.key.remoteJid;
-      if (!isInstanceOwner && !(await isGroupAdmin(sock, from, sender))) {
-        return sock.sendMessage(from, { text: 'Only group admins can use this command.' });
-      }
-      const g = await store.getGroupSettings(from);
-      if (sub !== 'on' && sub !== 'off') {
-        return sock.sendMessage(from, { text: `Antistatus is currently ${onOff(g.antistatus)}.\nFormat: .antistatus on/off` });
-      }
-      await store.setGroupSettings(from, { antistatus: sub === 'on' });
-      return sock.sendMessage(from, { text: `Antistatus is ${sub}.` });
-    },
-  },
   toggle('autoreact', 'autoReact', 'Har message par random emoji se react karta hai (owner only)'),
   toggle('anticall', 'antiCall', 'Aane wali calls automatically reject karta hai (owner only)'),
   toggle('recording', 'recording', 'Reply se pehle "recording audio..." dikhata hai (owner only)'),
   toggle('statusview', 'statusView', 'Contacts ki status automatically dekh leta hai (owner only)'),
   toggle('adminaction', 'adminAction', 'Group admin promote/demote par notify karta hai (owner only)'),
-  toggle('welcome', 'welcomeEnabled', 'Naye members ko welcome message bhejta hai'),
-  toggle('goodbye', 'goodbyeEnabled', 'Group chhodne walon ko goodbye message bhejta hai'),
   textSetting('setwelcome', 'welcomeMessage', 'Custom welcome message ({user} {group} {count})', 'Khush aamdeed {user}!'),
   textSetting('setgoodbye', 'goodbyeMessage', 'Custom goodbye message ({user} {group})', '{user} has left {group}.'),
   textSetting('botname', 'botName', 'Bot ka display naam (menu mein)', '<naya naam>'),

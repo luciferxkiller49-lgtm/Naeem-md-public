@@ -26,7 +26,6 @@ function prankCommand(name, aliases) {
 }
 
 module.exports = [
-  prankCommand('hack'),
   prankCommand('mobilehack'),
   prankCommand('ighack'),
   prankCommand('fbhack'),

@@ -136,13 +136,6 @@ module.exports = [
     },
   },
   {
-    name: 'status',
-    description: 'Bot ka connection status/uptime dikhata hai',
-    execute: async ({ sock, from, config }) => {
-      await sock.sendMessage(from, { text: `✅ ${config.botName} connected hai!\nUptime: ${getUptimeText()}` });
-    },
-  },
-  {
     name: 'pair',
     description: 'Chat se hi naya WhatsApp number pair karta hai (web panel ke bina)',
     execute: async ({ sock, from, args, isInstanceOwner, addInstance }) => {

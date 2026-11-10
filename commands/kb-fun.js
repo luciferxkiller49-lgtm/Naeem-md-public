@@ -92,15 +92,6 @@ module.exports = [
     execute: async ({ sock, from }) => sock.sendMessage(from, { text: `🎱 ${eightBallAnswers[Math.floor(Math.random() * eightBallAnswers.length)]}` }),
   },
   {
-    name: 'roast',
-    description: 'Kisi ko halka phulka roast karo',
-    execute: async ({ sock, from, msg }) => {
-      const mentioned = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-      const text = roasts[Math.floor(Math.random() * roasts.length)];
-      await sock.sendMessage(from, { text: mentioned ? `@${mentioned.split('@')[0]} ${text}` : text, mentions: mentioned ? [mentioned] : [] });
-    },
-  },
-  {
     name: 'compliment',
     description: 'Kisi ki tareef karo',
     execute: async ({ sock, from, msg }) => {
@@ -109,7 +100,6 @@ module.exports = [
       await sock.sendMessage(from, { text: mentioned ? `@${mentioned.split('@')[0]} ${text}` : text, mentions: mentioned ? [mentioned] : [] });
     },
   },
-  { name: 'joke', description: 'Random joke', execute: async ({ sock, from }) => sock.sendMessage(from, { text: `😂 ${jokes[Math.floor(Math.random() * jokes.length)]}` }) },
   {
     name: 'riddle',
     description: 'Random paheli',
@@ -119,7 +109,6 @@ module.exports = [
       setTimeout(() => sock.sendMessage(from, { text: `💡 Jawab: ${r.a}` }), 10000);
     },
   },
-  { name: 'quote', description: 'Random quote', execute: async ({ sock, from }) => sock.sendMessage(from, { text: `💬 ${quotes[Math.floor(Math.random() * quotes.length)]}` }) },
   { name: 'motivate', description: 'Motivational line', execute: async ({ sock, from }) => sock.sendMessage(from, { text: `🔥 ${motivations[Math.floor(Math.random() * motivations.length)]}` }) },
   {
     name: 'dare',

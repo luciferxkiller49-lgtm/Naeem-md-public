@@ -45,6 +45,15 @@ try {
 const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
 console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
 
+// Purane (offline / reconnect ke baad aaye hue) messages ka jawab nahi dete — restart ke baad bhari load aur purane jawab dono se bachat.
+// 0 likh kar band kiya ja sakta hai (Config Var MAX_MSG_AGE_SEC).
+const MAX_MSG_AGE_SEC = parseInt(process.env.MAX_MSG_AGE_SEC || '90', 10);
+function msgAgeSec(msg) {
+  const ts = msg.messageTimestamp;
+  const n = ts && typeof ts === 'object' ? (typeof ts.toNumber === 'function' ? ts.toNumber() : Number(ts.low)) : Number(ts);
+  return n ? Math.floor(Date.now() / 1000) - n : 0;
+}
+
 // WhatsApp ka latest version har reconnect par internet se nahi mangwate — 6 ghante yaad rakhte hain
 let waVersionCache = null;
 async function getWaVersion() {
@@ -319,10 +328,11 @@ class BotManager {
       }
     });
 
-    sock.ev.on('messages.upsert', async (chatUpdate) => {
+    // Ek upsert mein kai messages ho sakte hain (pehle sirf pehla process hota tha, baqi ignore). Ab har message alag, parallel.
+    const handleOne = async (msg) => {
       try {
-        const msg = chatUpdate.messages[0];
         if (!msg || !msg.message) return;
+        if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
 
         if (await handleAntiedit(sock, msg)) return;
 
@@ -389,27 +399,7 @@ class BotManager {
         let isSenderAdmin = false;
         let isBotAdmin = false;
 
-        if (isGroup) {
-          try {
-            const groupMetadata = await getGroupMeta(sock, from);
-            const participants = groupMetadata.participants || [];
-            isBotAdmin = botIsAdmin(participants, sock);
-            isSenderAdmin = senderIsAdmin(participants, msg);
-          } catch (e) {}
-
-          // .delalllink / .delallstatus ke liye — antilink/antigcstatus ON
-          // ho ya na ho, har group-status aur link wale message ka key yaad
-          // rakh lete hain taake baad mein ek command se sab sath delete ho
-          // saken.
-          bulkCache.record(from, msg);
-
-          if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
-
-          if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
-            return;
-          }
-        }
-
+        // Message ka text / prefix pehle nikal lete hain taake group ki maloomat sirf zaroorat par mangwayen
         const type = getContentType(msg.message);
         let body = '';
         if (type === 'conversation') {
@@ -421,10 +411,40 @@ class BotManager {
         } else if (type === 'videoMessage') {
           body = msg.message.videoMessage.caption;
         }
+        const prefix = instanceSettings.prefix || config.DEFAULT_PREFIX;
+        const wantsCmd = !!body && body.startsWith(prefix) && !!registry.find(body.slice(prefix.length).trim().split(/ +/)[0]?.toLowerCase());
+
+        if (isGroup) {
+          // SPEED/LOAD: group ki maloomat (WhatsApp se network call) sirf tab jab command ho ya is group mein
+          // koi anti-feature ON ho. Baqi aam chat messages par ye kaam bilkul nahi hota.
+          const gs = await store.getGroupSettings(from);
+          const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antigcstatus || gs.antimention);
+
+          if (guardOn || wantsCmd) {
+            try {
+              const groupMetadata = await getGroupMeta(sock, from);
+              const participants = groupMetadata.participants || [];
+              isBotAdmin = botIsAdmin(participants, sock);
+              isSenderAdmin = senderIsAdmin(participants, msg);
+            } catch (e) {}
+          }
+
+          // .delalllink / .delallstatus ke liye — antilink/antigcstatus ON
+          // ho ya na ho, har group-status aur link wale message ka key yaad
+          // rakh lete hain taake baad mein ek command se sab sath delete ho
+          // saken.
+          bulkCache.record(from, msg);
+
+          if (guardOn) {
+            if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
+
+            if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
+              return;
+            }
+          }
+        }
 
         if (!body) return;
-
-        const prefix = instanceSettings.prefix || config.DEFAULT_PREFIX;
 
         if (!body.startsWith(prefix)) {
           await handleChatbot(sock, msg, from, sender, body, botNumber);
@@ -507,8 +527,11 @@ class BotManager {
         }
 
       } catch (err) {
-        console.error('[BOT-MGR] Error processing message:', err?.message, '| chat:', chatUpdate?.messages?.[0]?.key?.remoteJid, '| alt:', chatUpdate?.messages?.[0]?.key?.remoteJidAlt);
+        console.error('[BOT-MGR] Error processing message:', err?.message, '| chat:', msg?.key?.remoteJid, '| alt:', msg?.key?.remoteJidAlt);
       }
+    };
+    sock.ev.on('messages.upsert', (chatUpdate) => {
+      for (const m of chatUpdate.messages || []) handleOne(m);
     });
 
     sock.ev.on('messages.update', async (updates) => {
