@@ -19,3 +19,10 @@
 ## Heroku par ek baar karna hai
 - ffmpeg buildpack (sticker/audio ke liye): `heroku buildpacks:add --index 1 https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest -a <app>`
 - Heroku aur Atlas ka region ek hi rakhein.
+
+## Update 2
+- `lib/mongoAuth.js` — number agar kisi doosre node ke naam par pehle se Mongo mein ho to "E11000 duplicate key" ki jagah saaf message
+  (linked ho ya 3 min se kam purani pairing ho) ya, agar wo purana adhoora kachra ho, to usay hata kar naya bana diya jata hai.
+- Naye commands (`commands/bulk-delete.js`): `.dellink` (link wale messages) aur `.delstory` (group status posts) — group admin chalaye, bot admin ho.
+  Purane naam (`.delalllink`, `.delallstatus` waghera) aliases ke taur par chalte hain. Ye pehle kisi file se load hi nahi hote the (`lib/moderation.js` orphan thi, hata di).
+- Limit: bot sirf wahi messages delete kar sakta hai jo usne online rehte hue dekhe hon (restart par list khali).
