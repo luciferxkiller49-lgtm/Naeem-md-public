@@ -10,6 +10,7 @@
 // NOTE: bot sirf wahi messages delete kar sakta hai jo usne online rehte hue dekhe hon (RAM mein yaad rehte hain,
 // restart par khali). Bot ke aane se PEHLE ke messages WhatsApp bot ko nahi deta.
 const bulkCache = require('../lib/bulkCache');
+const deleteGuard = require('../lib/deleteGuard');
 const { botIsAdmin } = require('../lib/groupUtil');
 
 const DELAY_MS = parseInt(process.env.BULK_DELETE_DELAY_MS || '250', 10); // WhatsApp ko spam na lage
@@ -26,6 +27,7 @@ function isSelfChat(ctx) {
 async function deleteKeys(ctx, chatId, keys) {
   let done = 0;
   for (const key of keys) {
+    deleteGuard.mark(key.id);
     try { await ctx.sock.sendMessage(chatId, { delete: key }); done++; } catch (e) {}
     await sleep(DELAY_MS);
   }

@@ -6,6 +6,7 @@ const botManager = require('./bot');
 const panelAuth = require('./lib/panelAuth');
 const capacity = require('./lib/capacity');
 const memlog = require('./lib/memlog');
+const fleet = require('./lib/fleet');
 
 const app = express();
 app.use(cors());
@@ -129,6 +130,7 @@ async function start() {
 
     memlog.start(() => botManager.getActiveCount());
     await botManager.init(db);
+    fleet.start(db, botManager); // har minute apna heartbeat Mongo mein (.botstatus ke liye)
   } catch (err) {
     console.error(`[INIT] Startup failed:`, err.message);
     process.exit(1);
