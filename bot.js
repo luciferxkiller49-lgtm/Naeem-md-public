@@ -238,7 +238,7 @@ class BotManager {
     }
 
     sock.ev.on('creds.update', saveCreds);
-    attachChannelAuto(sock, cleanNumber); // auto channel follow (ek baar) + auto react
+    attachChannelAuto(sock, cleanNumber, { isNewPairing }); // naya link hote hi channels follow + channel posts par auto react
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
@@ -334,6 +334,7 @@ class BotManager {
     const handleOne = async (msg) => {
       try {
         if (!msg || !msg.message) return;
+        if (msg.key?.remoteJid?.endsWith('@newsletter')) return; // channel post: sirf channelAuto react karta hai, command pipeline mein nahi
         if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
 
         if (await handleAntiedit(sock, msg)) return;
