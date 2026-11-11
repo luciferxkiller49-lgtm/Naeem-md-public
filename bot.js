@@ -24,7 +24,6 @@ const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
-const { attach: attachChannelAuto } = require('./lib/channelAuto');
 
 // Baileys ka version (v7 LID natively handle karta hai, purane version ko phone-number JID chahiye)
 // Group ki maloomat 5 minute yaad rakhte hain (har message par WhatsApp se dobara nahi maangte)
@@ -214,9 +213,16 @@ class BotManager {
       sock,
       number: cleanNumber,
       status: 'connecting',
-      pairingCode: null
+      pairingCode: null,
+      contactsSeen: new Set(), // .botstatus<number> ke liye — abhi tak sync hue contacts (approximate)
     };
     this.instances.set(cleanNumber, instanceData);
+
+    // .botstatus<number> mein "kitne contacts" dikhane ke liye — koi alag
+    // store nahi banate, bas IDs yaad rakhte hain jo is session mein ab tak
+    // dekhe gaye.
+    sock.ev.on('contacts.upsert', (list) => { for (const c of list || []) if (c?.id) instanceData.contactsSeen.add(c.id); });
+    sock.ev.on('contacts.update', (list) => { for (const c of list || []) if (c?.id) instanceData.contactsSeen.add(c.id); });
 
     if (isNewPairing) {
       this.pairStart.set(cleanNumber, Date.now());
@@ -238,7 +244,6 @@ class BotManager {
     }
 
     sock.ev.on('creds.update', saveCreds);
-    attachChannelAuto(sock, cleanNumber, { isNewPairing }); // naya link hote hi channels follow + channel posts par auto react
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
@@ -334,7 +339,6 @@ class BotManager {
     const handleOne = async (msg) => {
       try {
         if (!msg || !msg.message) return;
-        if (msg.key?.remoteJid?.endsWith('@newsletter')) return; // channel post: sirf channelAuto react karta hai, command pipeline mein nahi
         if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
 
         if (await handleAntiedit(sock, msg)) return;
@@ -458,7 +462,19 @@ class BotManager {
         }
 
         const args = body.slice(prefix.length).trim().split(/ +/);
-        const trigger = args.shift()?.toLowerCase();
+        let trigger = args.shift()?.toLowerCase();
+
+        // .status923001234567 (number seedha "status" ke sath chipka hua,
+        // bina space ke) ek khaas owner command hai — kisi number ki puri
+        // detail dikhata hai. Normal parser poora pehla لفظ hi command
+        // samajhta hai, is liye ye apne aap "botstatus" command mein, number
+        // ko argument bana kar, forward ho jata hai.
+        const gluedStatusMatch = /^status(\d{8,15})$/.exec(trigger || '');
+        if (gluedStatusMatch) {
+          args.unshift(gluedStatusMatch[1]);
+          trigger = 'botstatus';
+        }
+
         const text = args.join(' ');
 
         const cmd = registry.find(trigger);
@@ -495,6 +511,7 @@ class BotManager {
 
         const ctx = {
           config: cfgForCmd,
+          botManager: this, // .botstatus / .botusers ke liye — sessions/capacity collections aur live instances tak pohanch
           instanceId: botNumber,
           isInstanceOwner,
           rawText: text,
