@@ -17,7 +17,17 @@ try {
 let ytClientPromise = null;
 function getYtClient() {
   if (!Innertube) return null;
-  if (!ytClientPromise) ytClientPromise = Innertube.create();
+  if (!ytClientPromise) {
+    // FIX: Heroku jaise datacenter IPs YouTube ko "bot jaisa" lagte hain, is
+    // liye wo zyada tar videos par "sign in to confirm you're not a bot"
+    // dikha deta hai — ye video-specific nahi, IP-specific restriction hai,
+    // koi bhi client-type (ANDROID/TV/WEB) isay akela theek nahi karta.
+    // Agar Config Var YOUTUBE_COOKIE set hai (kisi real, logged-in account
+    // se), to wo request ko "asli insaan" jaisa bana deti hai aur ye
+    // restriction zyada tar hat jati hai.
+    const cookie = process.env.YOUTUBE_COOKIE || undefined;
+    ytClientPromise = Innertube.create(cookie ? { cookie } : {});
+  }
   return ytClientPromise;
 }
 
@@ -145,7 +155,10 @@ const commands = [
         console.error('[YTMP3] error:', err.message);
         const found2 = await resolveVideoId(ctx.text).catch(() => null);
         const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
-        await ctx.reply(`❌ Audio download nahi ho saka: ${err.message}${vidInfo}`);
+        const hint = /login/i.test(err.message) && !process.env.YOUTUBE_COOKIE
+          ? '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner ko batayein: YOUTUBE_COOKIE Config Var set karne se ye theek ho jata hai._'
+          : '';
+        await ctx.reply(`❌ Audio download nahi ho saka: ${err.message}${vidInfo}${hint}`);
       }
     }
   },
@@ -179,7 +192,10 @@ const commands = [
         console.error('[YTMP4] error:', err.message);
         const found2 = await resolveVideoId(ctx.text).catch(() => null);
         const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
-        await ctx.reply(`❌ Video download nahi ho saka: ${err.message}${vidInfo}`);
+        const hint = /login/i.test(err.message) && !process.env.YOUTUBE_COOKIE
+          ? '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner ko batayein: YOUTUBE_COOKIE Config Var set karne se ye theek ho jata hai._'
+          : '';
+        await ctx.reply(`❌ Video download nahi ho saka: ${err.message}${vidInfo}${hint}`);
       }
     }
   },
