@@ -1,4 +1,67 @@
 const axios = require('axios');
+const { Readable } = require('node:stream');
+
+// YouTube download ke liye "youtubei.js" use karte hain (search + download
+// dono isi mein built-in hain). Pehle "@distube/ytdl-core" istemal karne ka
+// socha tha, lekin uske apne docs mein likha hai ke ab wo maintain nahi ho
+// raha aur "youtubei.js" istemal karne ki salah di gayi hai — is liye
+// shuru se hi mazboot wala choose kiya.
+let Innertube = null;
+try {
+  ({ Innertube } = require('youtubei.js'));
+} catch (e) {
+  // package.json update hone ke baad deploy nahi hui — neeche is ki wajah se
+  // saaf error milega, crash nahi hoga.
+}
+
+let ytClientPromise = null;
+function getYtClient() {
+  if (!Innertube) return null;
+  if (!ytClientPromise) ytClientPromise = Innertube.create();
+  return ytClientPromise;
+}
+
+async function resolveVideoId(query) {
+  const urlMatch = /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/))([A-Za-z0-9_-]{11})/.exec(query);
+  if (urlMatch) return { id: urlMatch[1] };
+
+  const yt = await getYtClient();
+  const search = await yt.search(query, { type: 'video' });
+  const first = (search?.videos && search.videos[0]) || (search?.results || []).find((r) => r?.id);
+  if (!first) return null;
+  return { id: first.id, title: first.title?.text || first.title };
+}
+
+async function downloadAudio(videoId) {
+  const yt = await getYtClient();
+  const info = await yt.getInfo(videoId);
+  const stream = await info.download({ type: 'audio', quality: 'best' });
+  const nodeStream = Readable.fromWeb(stream);
+  const chunks = [];
+  for await (const chunk of nodeStream) chunks.push(chunk);
+  return {
+    buffer: Buffer.concat(chunks),
+    title: info.basic_info?.title || 'audio',
+    durationSec: Number(info.basic_info?.duration || 0),
+  };
+}
+
+async function downloadVideo(videoId) {
+  const yt = await getYtClient();
+  const info = await yt.getInfo(videoId);
+  const stream = await info.download({ type: 'video+audio', quality: 'bestefficiency' });
+  const nodeStream = Readable.fromWeb(stream);
+  const chunks = [];
+  for await (const chunk of nodeStream) chunks.push(chunk);
+  return {
+    buffer: Buffer.concat(chunks),
+    title: info.basic_info?.title || 'video',
+    durationSec: Number(info.basic_info?.duration || 0),
+  };
+}
+
+const NOT_READY_MSG = '❌ Is feature ke liye "youtubei.js" package abhi deploy nahi hui. package.json update karke dobara deploy karein.';
+const MAX_DURATION_SEC = 15 * 60; // 15 minute — Heroku/WhatsApp par bohot lambi file bhejna mushkil hota hai
 
 const commands = [
   {
@@ -34,27 +97,66 @@ const commands = [
   {
     name: 'ytmp3',
     aliases: ['yta', 'song'],
-    description: 'Download audio from YouTube URL',
+    description: 'Download audio from YouTube (link ya naam se search)',
     category: 'downloader',
     async execute(ctx) {
       if (!ctx.text) {
-        return ctx.reply(`Usage: *${ctx.prefix}ytmp3 <YouTube URL or Search Query>*`);
+        return ctx.reply(`Usage: *${ctx.prefix}song <naam ya YouTube link>*`);
       }
+      if (!Innertube) return ctx.reply(NOT_READY_MSG);
+
       await ctx.react('🎵');
-      await ctx.reply(`🔍 Searching & downloading audio for: *${ctx.text}*...\n_Please wait a moment._`);
+      try {
+        const found = await resolveVideoId(ctx.text);
+        if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
+
+        const { buffer, title, durationSec } = await downloadAudio(found.id);
+        if (durationSec > MAX_DURATION_SEC) {
+          return ctx.reply(`❌ *${title}* 15 minute se lamba hai, chhota gaana try karein.`);
+        }
+
+        await ctx.sock.sendMessage(ctx.from, {
+          audio: buffer,
+          mimetype: 'audio/mp4',
+          fileName: `${(title || 'audio').slice(0, 60)}.m4a`,
+        }, { quoted: ctx.msg });
+        await ctx.react('✅');
+      } catch (err) {
+        console.error('[YTMP3] error:', err.message);
+        await ctx.reply('❌ Audio download nahi ho saka: ' + err.message);
+      }
     }
   },
   {
     name: 'ytmp4',
     aliases: ['ytv', 'video'],
-    description: 'Download video from YouTube URL',
+    description: 'Download video from YouTube (link ya naam se search)',
     category: 'downloader',
     async execute(ctx) {
       if (!ctx.text) {
-        return ctx.reply(`Usage: *${ctx.prefix}ytmp4 <YouTube URL>*`);
+        return ctx.reply(`Usage: *${ctx.prefix}video <naam ya YouTube link>*`);
       }
+      if (!Innertube) return ctx.reply(NOT_READY_MSG);
+
       await ctx.react('🎬');
-      await ctx.reply(`🔍 Fetching video stream for: *${ctx.text}*...\n_Processing HD quality._`);
+      try {
+        const found = await resolveVideoId(ctx.text);
+        if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
+
+        const { buffer, title, durationSec } = await downloadVideo(found.id);
+        if (durationSec > MAX_DURATION_SEC) {
+          return ctx.reply(`❌ *${title}* 15 minute se lamba hai, chhoti video try karein.`);
+        }
+
+        await ctx.sock.sendMessage(ctx.from, {
+          video: buffer,
+          caption: `🎬 *${title || 'YouTube Video'}*`,
+        }, { quoted: ctx.msg });
+        await ctx.react('✅');
+      } catch (err) {
+        console.error('[YTMP4] error:', err.message);
+        await ctx.reply('❌ Video download nahi ho saka: ' + err.message);
+      }
     }
   },
   {
@@ -68,6 +170,8 @@ const commands = [
       }
       await ctx.react('📸');
       await ctx.reply(`⏳ Fetching Instagram media...`);
+      // NOTE: Ye abhi bhi placeholder hai — asal download implement nahi hua.
+      // Agar isay bhi chalana hai to bata dein, isay bhi ytmp3 jaisa theek kar denge.
     }
   }
 ];
