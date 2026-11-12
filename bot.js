@@ -13,6 +13,7 @@ const config = require('./config');
 const logger = require('./lib/quietLogs');
 const { useMongoDBAuthState, getAppSessions, purgeUnlinkedSessions } = require('./lib/mongoAuth');
 const sessionFix = require('./lib/sessionFix');
+const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
 const capacity = require('./lib/capacity');
@@ -197,6 +198,7 @@ class BotManager {
 
     const version = await getWaVersion();
 
+    const sentCache = createSentCache(parseInt(process.env.SENT_CACHE || '150', 10));
     const sock = makeWASocket({
       ...(version ? { version } : {}),
       logger,
@@ -208,8 +210,11 @@ class BotManager {
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
-      cachedGroupMetadata: async (jid) => groupMetaCache.get(jid)
+      cachedGroupMetadata: async (jid) => groupMetaCache.get(jid),
+      // Retry requests (kisi member ko bot ka message decrypt na ho) ke liye bheje hue messages yaad rakhte hain
+      getMessage: sentCache.getMessage
     });
+    sentCache.wrap(sock);
 
     const instanceData = {
       sock,
@@ -340,7 +345,7 @@ class BotManager {
       try {
         // Group ka message decrypt hi nahi hua (stub CIPHERTEXT=2): bar bar ho to us group ke kharab sender-keys khud saaf (auto-heal)
         if (msg && !msg.message && msg.messageStubType === 2 && msg.key?.remoteJid?.endsWith('@g.us')) {
-          sessionFix.onDecryptFail(sock, listKeyIds, cleanNumber, msg.key.remoteJid);
+          sessionFix.onDecryptFail(sock, listKeyIds, cleanNumber, msg.key.remoteJid, Date.now(), msg.messageStubParameters?.[0]);
           return;
         }
         if (!msg || !msg.message) return;

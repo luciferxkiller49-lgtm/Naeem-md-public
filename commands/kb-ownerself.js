@@ -1,6 +1,13 @@
 const { getUptimeText } = require('../lib/uptime');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
+const VV_NOT_FOUND =
+  'ℹ️ Is view-once ka media mujhe nahi mil raha.\n\n' +
+  'Wajah in mein se koi ek hoti hai:\n' +
+  '• wo pehle hi khul chuka ya expire ho chuka hai (WhatsApp tab media quote se hata deta hai)\n' +
+  '• wo aap ka apna bheja hua view-once hai (iska media bhi quote mein nahi aata)\n' +
+  '• aap ne view-once image/video ki jagah kisi aur message par reply kiya';
+
 function idFromNumber(n) {
   return (n || '').replace(/[^0-9]/g, '');
 }
@@ -37,7 +44,7 @@ module.exports = [
     description: 'View-once media ko dobara isi chat mein bhejta hai (reply karke)',
     execute: async ({ sock, msg, from }) => {
       const media = await extractViewOnce(sock, msg);
-      if (!media) return sock.sendMessage(from, { text: 'Reply to a view-once image/video with this command (it may have already expired or opened).' });
+      if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       await sock.sendMessage(from, media.isImage ? { image: media.buffer, caption: media.caption } : { video: media.buffer, caption: media.caption });
     },
   },
@@ -46,7 +53,7 @@ module.exports = [
     description: 'View-once media ko owner ki apni DM mein bhejta hai',
     execute: async ({ sock, msg, from }) => {
       const media = await extractViewOnce(sock, msg);
-      if (!media) return sock.sendMessage(from, { text: 'Reply to a view-once image/video with this command (it may have already expired or opened).' });
+      if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       const ownerJid = `${sock.user.id.split(':')[0]}@s.whatsapp.net`;
       await sock.sendMessage(ownerJid, media.isImage ? { image: media.buffer, caption: media.caption } : { video: media.buffer, caption: media.caption });
       await sock.sendMessage(from, { text: '✅ Sent to your DM.' });
@@ -57,7 +64,7 @@ module.exports = [
     description: 'View-once media ko document ki tarah bhejta hai (dobara view-once na bane)',
     execute: async ({ sock, msg, from }) => {
       const media = await extractViewOnce(sock, msg);
-      if (!media) return sock.sendMessage(from, { text: 'Reply to a view-once image/video with this command (it may have already expired or opened).' });
+      if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       await sock.sendMessage(from, { document: media.buffer, mimetype: media.isImage ? 'image/jpeg' : 'video/mp4', fileName: media.isImage ? 'image.jpg' : 'video.mp4' });
     },
   },
