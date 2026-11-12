@@ -337,6 +337,14 @@ class BotManager {
           const t2 = this.reconnectTimers.get(cleanNumber);
           if (t2) { clearTimeout(t2); this.reconnectTimers.delete(cleanNumber); }
           await deleteSession();
+          // User ne khud WhatsApp se bot ko unlink kiya (genuine logout) —
+          // is case mein hi uski settings (intro, menu dp, waghera) saaf
+          // karte hain, taake dobara link karne par fresh shuruaat ho. Agar
+          // ye sirf "never finished pairing" (giveUp) wala case hai to kuch
+          // wipe nahi karte — wahan settings waise bhi kabhi set nahi hui hotin.
+          if (loggedOut) {
+            try { await store.wipeNumber(cleanNumber); } catch (e) {}
+          }
           // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
         }
