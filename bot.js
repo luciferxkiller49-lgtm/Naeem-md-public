@@ -479,10 +479,6 @@ class BotManager {
         const cmd = registry.find(trigger);
         if (!cmd) return;
 
-        if (safety.isRateLimited(sender)) {
-          return;
-        }
-
         // FIX: this was the exact bug flagged in the original project's own
         // history doc. `sender` in a group is a participant JID like
         // "923001234567:12@s.whatsapp.net" — the ":12" device suffix. The old
@@ -495,6 +491,14 @@ class BotManager {
         const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
         if (instanceSettings.mode === 'private' && !isOwner) {
+          return;
+        }
+
+        // FIX (group mein bot kabhi jawab nahi deta): cooldown pehle SAB bots ke liye ek hi tha (sirf sender ke naam par) aur
+        // mode/owner check se PEHLE lagta tha. Ek hi group mein jab kai users ke bots hon (ek hi server par), to ek command
+        // sab ko milta hai: pehla bot cooldown "kha" leta tha, phir wo mode private ki wajah se ignore karta, aur asal owner ka
+        // apna bot "rate limited" samajh kar chup reh jata tha. Ab: har bot ka apna cooldown, aur sirf unke liye jo command chala sakte hain.
+        if (safety.isRateLimited(`${botNumber}:${sender}`)) {
           return;
         }
 
