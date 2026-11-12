@@ -73,7 +73,12 @@ const commands = [
   },
   {
     name: 'setintro',
-    aliases: ['intro'],
+    // FIX: 'intro' pehle isi command ka alias tha, aur kb-settings.js mein
+    // bhi ek ALAG 'intro' command tha jo saved intro DIKHATA hai. Dono
+    // "intro" naam par takra rahe the — jo pehle load hota wahi jeetta, is
+    // liye kabhi .intro se set ho jata, kabhi display. Ab 'setintro' sirf
+    // SET karta hai, 'intro' (kb-settings.js mein) sirf DIKHATA hai — dono
+    // poori tarah alag, bina kisi takraav ke.
     description: 'Set a custom introduction message for this bot',
     category: 'settings',
     async execute(ctx) {
