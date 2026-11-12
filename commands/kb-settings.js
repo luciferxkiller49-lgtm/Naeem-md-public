@@ -192,7 +192,7 @@ module.exports = [
     async execute({ sock, from, isInstanceOwner, botNumber }) {
       if (!isInstanceOwner) return sock.sendMessage(from, { text: NOT_OWNER });
       const text = await store.getIntro(botNumber);
-      if (!text) return sock.sendMessage(from, { text: 'No intro saved yet. Reply to a message with .setintro first.' });
+      if (!text) return sock.sendMessage(from, { text: 'No intro saved yet. Use .setintro <your message> first.' });
       await sock.sendMessage(from, { text });
     },
   },
