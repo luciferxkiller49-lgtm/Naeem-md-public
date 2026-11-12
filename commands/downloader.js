@@ -32,9 +32,22 @@ async function resolveVideoId(query) {
   return { id: first.id, title: first.title?.text || first.title };
 }
 
+async function getInfoWithFallback(yt, videoId) {
+  // FIX: default "WEB" client par YouTube bohot videos ko "login required"
+  // keh kar rok deta hai (bot-detection). "ANDROID" client ko ye rukawat
+  // nahi hoti, is liye pehle usay try karte hain; kaam na kare to "WEB"
+  // par wapas gir jate hain (dono tareeqon mein se jo chale).
+  try {
+    return await yt.getInfo(videoId, 'ANDROID');
+  } catch (err) {
+    console.warn('[YT] ANDROID client failed, trying WEB:', err.message);
+    return await yt.getInfo(videoId);
+  }
+}
+
 async function downloadAudio(videoId) {
   const yt = await getYtClient();
-  const info = await yt.getInfo(videoId);
+  const info = await getInfoWithFallback(yt, videoId);
   const stream = await info.download({ type: 'audio', quality: 'best' });
   const nodeStream = Readable.fromWeb(stream);
   const chunks = [];
@@ -48,7 +61,7 @@ async function downloadAudio(videoId) {
 
 async function downloadVideo(videoId) {
   const yt = await getYtClient();
-  const info = await yt.getInfo(videoId);
+  const info = await getInfoWithFallback(yt, videoId);
   const stream = await info.download({ type: 'video+audio', quality: 'bestefficiency' });
   const nodeStream = Readable.fromWeb(stream);
   const chunks = [];
