@@ -32,17 +32,24 @@ async function resolveVideoId(query) {
   return { id: first.id, title: first.title?.text || first.title };
 }
 
+// FIX: sirf "ANDROID" bhi kaafi nahi nikla — kuch videos (khas kar jo
+// YouTube "sign-in to confirm" list mein daal deta hai) har aam client par
+// "login required" dete hain. "TV_EMBEDDED" khaas isi tarah ke videos ke
+// liye bana hai (bina login ke age/region-restricted bhi chal jata hai).
+// Teeno try karte hain, jo pehle chale wahi istemal hota hai.
+const CLIENT_CHAIN = ['ANDROID', 'TV_EMBEDDED', 'WEB'];
+
 async function getInfoWithFallback(yt, videoId) {
-  // FIX: default "WEB" client par YouTube bohot videos ko "login required"
-  // keh kar rok deta hai (bot-detection). "ANDROID" client ko ye rukawat
-  // nahi hoti, is liye pehle usay try karte hain; kaam na kare to "WEB"
-  // par wapas gir jate hain (dono tareeqon mein se jo chale).
-  try {
-    return await yt.getInfo(videoId, 'ANDROID');
-  } catch (err) {
-    console.warn('[YT] ANDROID client failed, trying WEB:', err.message);
-    return await yt.getInfo(videoId);
+  let lastErr;
+  for (const client of CLIENT_CHAIN) {
+    try {
+      return await (client === 'WEB' ? yt.getInfo(videoId) : yt.getInfo(videoId, client));
+    } catch (err) {
+      console.warn(`[YT] ${client} client failed for ${videoId}:`, err.message);
+      lastErr = err;
+    }
   }
+  throw lastErr;
 }
 
 async function downloadAudio(videoId) {
@@ -136,7 +143,9 @@ const commands = [
         await ctx.react('✅');
       } catch (err) {
         console.error('[YTMP3] error:', err.message);
-        await ctx.reply('❌ Audio download nahi ho saka: ' + err.message);
+        const found2 = await resolveVideoId(ctx.text).catch(() => null);
+        const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
+        await ctx.reply(`❌ Audio download nahi ho saka: ${err.message}${vidInfo}`);
       }
     }
   },
@@ -168,7 +177,9 @@ const commands = [
         await ctx.react('✅');
       } catch (err) {
         console.error('[YTMP4] error:', err.message);
-        await ctx.reply('❌ Video download nahi ho saka: ' + err.message);
+        const found2 = await resolveVideoId(ctx.text).catch(() => null);
+        const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
+        await ctx.reply(`❌ Video download nahi ho saka: ${err.message}${vidInfo}`);
       }
     }
   },
