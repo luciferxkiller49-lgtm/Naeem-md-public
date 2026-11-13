@@ -9,7 +9,7 @@ const commands = [
     category: 'general',
     async execute(ctx) {
       const start = Date.now();
-      try { await ctx.react('⚡'); } catch (e) { /* reaction na lage to bhi jawab zaroor jaye */ }
+      ctx.react('⚡'); // reaction ka intezar nahi — ye jawab ko rokta nahi (ctx.react khud errors pakadta hai)
       const latency = Date.now() - start;
 
       const replyText = ` Pong! ⚡\n` +

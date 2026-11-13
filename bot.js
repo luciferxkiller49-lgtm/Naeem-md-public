@@ -198,7 +198,7 @@ class BotManager {
 
     const version = await getWaVersion();
 
-    const sentCache = createSentCache(parseInt(process.env.SENT_CACHE || '150', 10));
+    const sentCache = createSentCache(parseInt(process.env.SENT_CACHE || '40', 10));
     const sock = makeWASocket({
       ...(version ? { version } : {}),
       logger,
@@ -273,17 +273,14 @@ class BotManager {
           }
           if (s0.connectedMsgSent === false) {
             const userJid = `${cleanNumber}@s.whatsapp.net`;
-            // FIX: pehle yahan `store.getIntro()` ka saved intro, agar set
-            // hota, to connect-waqt wale video/message ki jagah le leta tha.
-            // `.setintro`/`.intro` ek alag, mustaqil feature hona chahiye —
-            // connect-message hamesha yahi fixed default rehna chahiye.
+            const intro = await store.getIntro(cleanNumber);
             const built = buildConnectMessage({
               number: cleanNumber,
               prefix: s0.prefix || config.DEFAULT_PREFIX,
               mode: s0.mode,
               plugins: registry.getAll().length,
             });
-            const caption = built.text;
+            const caption = intro || built.text;
             if (built.videoPath) {
               await sock.sendMessage(userJid, { video: { url: built.videoPath }, mimetype: 'video/mp4', caption });
             } else {
@@ -337,14 +334,6 @@ class BotManager {
           const t2 = this.reconnectTimers.get(cleanNumber);
           if (t2) { clearTimeout(t2); this.reconnectTimers.delete(cleanNumber); }
           await deleteSession();
-          // User ne khud WhatsApp se bot ko unlink kiya (genuine logout) —
-          // is case mein hi uski settings (intro, menu dp, waghera) saaf
-          // karte hain, taake dobara link karne par fresh shuruaat ho. Agar
-          // ye sirf "never finished pairing" (giveUp) wala case hai to kuch
-          // wipe nahi karte — wahan settings waise bhi kabhi set nahi hui hotin.
-          if (loggedOut) {
-            try { await store.wipeNumber(cleanNumber); } catch (e) {}
-          }
           // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
         }
@@ -423,7 +412,9 @@ class BotManager {
         if (instanceSettings.autoTyping && !isMe) {
           sideEffects.push(sock.sendPresenceUpdate('composing', from).catch(() => {}));
         }
-        if (sideEffects.length) await Promise.all(sideEffects);
+        // Side-effects (auto react, read receipt, typing) WhatsApp ki network calls hain. Inke khatam hone ka intezar
+        // command ko nahi rokta — pehle har jawab inke intezar mein atakta tha.
+        if (sideEffects.length) Promise.all(sideEffects).catch(() => {});
 
         let isSenderAdmin = false;
         let isBotAdmin = false;
@@ -582,57 +573,6 @@ class BotManager {
       }
     });
 
-    // Welcome: 3 messages baari baari (1st member -> msg1, 2nd -> msg2, 3rd -> msg3, 4th -> msg1 phir se...)
-    // Agar group ne apna custom `welcomeMessage` set kar rakha hai (s.welcomeMessage), to wahi
-    // (akela, bina cycle ke) use hota hai — rotation sirf DEFAULT ke liye hai.
-    const WELCOME_TEMPLATES = [
-      `𝆺𝅥🖤 ꯭ं٭ 𝐀 𝐍𝐄𝐖 𝐒𝐎𝐔𝐋 𝐉𝐎𝐈𝐍𝐄𝐃 𝐎𝐔𝐑 𝐖𝐎𝐑𝐋𝐃 ٭ ꯭🥀𝆺𝅥
-
-𓆩🌹𓆪 𝐇𝐄𝐘 𝐃𝐄𝐀𝐑, 𝐘𝐎𝐔'𝐑𝐄 𝐖𝐄𝐋𝐂𝐎𝐌𝐄!
-
-⏤͟͟͞⃝⃪ 𝐒𝐌𝐈𝐋𝐄 • 𝐂𝐇𝐀𝐓 • 𝐄𝐍𝐉𝐎𝐘 ✨
-
-٭◌ تـــۛۤ᷼ــمـــۛۤ᷼ــہـــۛۤ᷼ــاری آمـــۛۤ᷼ــد ہـــۛۤ᷼ــمـــۛۤ᷼ــاری خـــۛۤ᷼ــوشـــۛۤ᷼ــی ہـــۛۤ᷼ــے 🥹🌹
-
-𓆩🦋𓆪 𝐌𝐀𝐊𝐄 𝐘𝐎𝐔𝐑 𝐎𝐖𝐍 𝐌𝐄𝐌𝐎𝐑𝐈𝐄𝐒!
-
-　　　　　— 𝐍𝐀𝐄𝐄𝐌-𝐌𝐃 🖤`,
-      `༺🖤༻ ꯭ं٭ 𝐘𝐎𝐔 𝐀𝐑𝐄 𝐈𝐍𝐕𝐈𝐓𝐄𝐃 𝐓𝐎 𝐎𝐔𝐑 𝐕𝐈𝐁𝐄 ٭ ꯭༺🖤༻
-
-𓆩🥀𓆪 𝐍𝐄𝐖 𝐅𝐀𝐂𝐄 • 𝐍𝐄𝐖 𝐕𝐈𝐁𝐄 • 𝐍𝐄𝐖 𝐌𝐄𝐌𝐎𝐑𝐈𝐄𝐒 ✨
-
-⏤͟͟͞⃝⃪ 𝐋𝐄𝐓'𝐒 𝐌𝐀𝐊𝐄 𝐓𝐇𝐈𝐒 𝐏𝐋𝐀𝐂𝐄 𝐀 𝐋𝐈𝐓𝐓𝐋𝐄 𝐌𝐎𝐑𝐄 𝐒𝐏𝐄𝐂𝐈𝐀𝐋 🦋💗
-
-🌙 𝐆𝐎𝐎𝐃 𝐕𝐈𝐁𝐄𝐒, 𝐑𝐀𝐍𝐃𝐎𝐌 𝐂𝐇𝐀𝐓𝐒 & 𝐄𝐍𝐃𝐋𝐄𝐒𝐒 𝐋𝐀𝐔𝐆𝐇𝐓𝐄𝐑!
-
-٭◌ آج ســـۛۤ᷼ــے آپ بـــۛۤ᷼ــھی ہـــۛۤ᷼ــمـــۛۤ᷼ــاری اس خـــۛۤ᷼ــوبـــۛۤ᷼ــصـــۛۤ᷼ــورت مـــۛۤ᷼ــحـــۛۤ᷼ــفـــۛۤ᷼ــل کـــۛۤ᷼ــا حـــۛۤ᷼ــصـــۛۤ᷼ــہ ہـــۛۤ᷼ــیـــۛۤ᷼ــں 🥹🌹
-
-𓆩🌹𓆪 𝐁𝐄 𝐘𝐎𝐔𝐑𝐒𝐄𝐋𝐅, 𝐒𝐓𝐀𝐘 𝐂𝐎𝐎𝐋 & 𝐄𝐍𝐉𝐎𝐘 𝐄𝐕𝐄𝐑𝐘 𝐌𝐎𝐌𝐄𝐍𝐓!
-
-　　　　　— 𝐍𝐀𝐄𝐄𝐌-𝐌𝐃 🥀`,
-      `𝆺𝅥🖤 ꯭ं٭ 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐎𝐔𝐑 𝐁𝐄𝐀𝐔𝐓𝐈𝐅𝐔𝐋 𝐖𝐎𝐑𝐋𝐃 ٭ ꯭🥀𝆺𝅥
-
-𓆩🌹𓆪 𝐇𝐄𝐘 𝐃𝐄𝐀𝐑, 𝐘𝐎𝐔'𝐑𝐄 𝐖𝐀𝐑𝐌𝐋𝐘 𝐖𝐄𝐋𝐂𝐎𝐌𝐄! ✨
-
-⏤͟͟͞⃝⃪ 𝐂𝐇𝐀𝐓 • 𝐒𝐌𝐈𝐋𝐄 • 𝐌𝐄𝐄𝐓 𝐍𝐄𝐖 𝐏𝐄𝐎𝐏𝐋𝐄 • 𝐌𝐀𝐊𝐄 𝐌𝐄𝐌𝐎𝐑𝐈𝐄𝐒 🦋
-
-٭◌ آج ســـۛۤ᷼ــے آپ بـــۛۤ᷼ــھی ہـــۛۤ᷼ــمـــۛۤ᷼ــاری اس خـــۛۤ᷼ــوبـــۛۤ᷼ــصـــۛۤ᷼ــورت مـــۛۤ᷼ــحـــۛۤ᷼ــفـــۛۤ᷼ــل کـــۛۤ᷼ــا حـــۛۤ᷼ــصـــۛۤ᷼ــہ ہـــۛۤ᷼ــیـــۛۤ᷼ــں 🥹🌹
-
-𓆩🖤𓆪 𝐅𝐄𝐄𝐋 𝐅𝐑𝐄𝐄 𝐓𝐎 𝐒𝐇𝐀𝐑𝐄 𝐘𝐎𝐔𝐑 𝐕𝐈𝐁𝐄 & 𝐄𝐍𝐉𝐎𝐘 𝐄𝐕𝐄𝐑𝐘 𝐌𝐎𝐌𝐄𝐍𝐓!
-
-　　　　　— 𝐍𝐀𝐄𝐄𝐌-𝐌𝐃 🖤🥀`,
-    ];
-    const DEFAULT_GOODBYE = `𓆩🥀𓆪 𝐆𝐎𝐎𝐃 𝐁𝐘𝐄, 𝐌𝐘 𝐃𝐄𝐀𝐑 🖤✨
-
-٭◌ جـــۛۤ᷼ــانـــۛۤ᷼ــا، خـــۛۤ᷼ــیـــۛۤ᷼ــال رکـــۛۤ᷼ــھـــۛۤ᷼ــنـــۛۤ᷼ــا…
-مـــۛۤ᷼ــلـــۛۤ᷼ــیـــۛۤ᷼ــں گـــۛۤ᷼ــے پـــۛۤ᷼ــھـــۛۤ᷼ــر ❤️🥀
-
-⏤͟͟͞⃝⃪𝆺𝅥 𝐒𝐭𝐚𝐲 𝐇𝐚𝐩𝐩𝐲 • 𝐊𝐞𝐞𝐩 𝐒𝐦𝐢𝐥𝐢𝐧𝐠 • 𝐓𝐚𝐤𝐞 𝐂𝐚𝐫𝐞 🦋𝆺𝅥⃝𝄟
-
-𓆩🖤𓆪 𝐘𝐎𝐔'𝐋𝐋 𝐀𝐋𝐖𝐀𝐘𝐒 𝐁𝐄 𝐏𝐀𝐑𝐓 𝐎𝐅 𝐎𝐔𝐑 𝐌𝐄𝐌𝐎𝐑𝐈𝐄𝐒 🌹
-
-　　　　　— 𝐍𝐚𝐞𝐞𝐦-𝐌𝐃 🖤✨`;
-
     // Welcome / goodbye / admin-action
     sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u.id) groupMetaCache.del(u.id); });
     sock.ev.on('group-participants.update', async (update) => {
@@ -654,23 +594,13 @@ class BotManager {
           if (!jid) continue;
           const tag = `@${jid.split('@')[0]}`;
           if (action === 'add') {
-            let bodyTpl;
-            if (s.welcomeMessage) {
-              bodyTpl = s.welcomeMessage;
-            } else {
-              // 3 messages ek cycle mein: 1st member -> 0, 2nd -> 1, 3rd -> 2, 4th -> 0 phir se...
-              const gsNow = await store.getGroupSettings(id);
-              const idx = (gsNow.welcomeIndex || 0) % WELCOME_TEMPLATES.length;
-              bodyTpl = WELCOME_TEMPLATES[idx];
-              await store.setGroupSettings(id, { welcomeIndex: (idx + 1) % WELCOME_TEMPLATES.length });
-            }
-            const text = `${tag}\n\n${bodyTpl}`.replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
+            const tpl = s.welcomeMessage || `{user}\n\n🌸 *WELCOME TO {group}* 🌸\n👥 Members: {count}\n— ${s.botName || config.BOT_NAME}`;
+            const text = tpl.replace('{user}', tag).replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
             let pp = null; try { pp = await sock.profilePictureUrl(jid, 'image'); } catch (e) {}
             await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid] } : { text, mentions: [jid] });
           } else if (action === 'remove') {
-            const tpl = s.goodbyeMessage || DEFAULT_GOODBYE;
-            const text = `${tag}\n\n${tpl}`.replace('{group}', metadata.subject);
-            await sock.sendMessage(id, { text, mentions: [jid] });
+            const tpl = s.goodbyeMessage || `{user}\n🥀 GOOD BYE 🖤\n— ${s.botName || config.BOT_NAME}`;
+            await sock.sendMessage(id, { text: tpl.replace('{user}', tag).replace('{group}', metadata.subject), mentions: [jid] });
           } else {
             await sock.sendMessage(id, { text: `${tag} was ${action === 'promote' ? 'promoted' : 'demoted'}.`, mentions: [jid] });
           }
