@@ -18,7 +18,7 @@
     "mongodb": "^6.8.0",
     "node-cache": "^5.1.2",
     "pino": "^9.3.2",
-    "youtubei.js": "^13.2.0"
+    "youtubei.js": "^18.3.0"
   },
   "keywords": [
     "whatsapp-bot",
