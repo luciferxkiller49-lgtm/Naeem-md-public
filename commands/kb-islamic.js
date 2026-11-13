@@ -48,5 +48,4 @@ module.exports = [
       await sock.sendMessage(from, { text: `📖 *Quran Reminder*\n\n${reminders[Math.floor(Math.random() * reminders.length)]}` });
     },
   },
-  { name: 'naat', description: 'Naat ka link/reference', execute: async ({ sock, from }) => sock.sendMessage(from, { text: '🎙️ Naat feature abhi audio library ke bina available nahi — is par kaam ho raha hai.' }) },
 ];

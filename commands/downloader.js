@@ -127,6 +127,62 @@ async function downloadAudioSmart(videoId, titleHint) {
 const NOT_READY_MSG = '❌ Is feature ke liye "youtubei.js" package abhi deploy nahi hui. package.json update karke dobara deploy karein.';
 const MAX_DURATION_SEC = 15 * 60; // 15 minute — Heroku/WhatsApp par bohot lambi file bhejna mushkil hota hai
 
+// ---- FastSaver se audio/video (sab commands isi ko use karte hain) ----
+async function downloadMediaSmart(videoId, titleHint, format) {
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const fallback = format === 'video' ? downloadVideo : downloadAudio;
+  const maxBytes = format === 'video' ? fastsaver.MAX_VIDEO_BYTES : fastsaver.MAX_AUDIO_BYTES;
+  if (!fastsaver.hasKeys()) {
+    const r = await fallback(videoId);
+    return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
+  }
+  try {
+    const link = await fastsaver.fetchMediaLink(ytUrl, format);
+    let buffer = null;
+    try { buffer = await fastsaver.downloadMediaBuffer(link, maxBytes); }
+    catch (e) { console.warn(`[${format.toUpperCase()}] file download fail, link se bhejenge:`, e.message); }
+    return { buffer, url: link, title: titleHint, durationSec: 0 };
+  } catch (fsErr) {
+    console.error(`[${format.toUpperCase()}] FastSaver fail:`, fsErr.message);
+    try {
+      const r = await fallback(videoId);
+      return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
+    } catch (ytErr) {
+      throw new Error(`FastSaver: ${fsErr.message} | YouTube: ${ytErr.message}`);
+    }
+  }
+}
+
+// .play / .naat: .song jaisa hi (naat ke liye naam ke peeche "naat" lagta hai, link ho to nahi)
+async function songLike(ctx, suffix) {
+  const text = ctx.text || '';
+  const isLink = /youtu/i.test(text);
+  const query = text && suffix && !isLink ? text + suffix : text;
+  const ytmp3 = commands.find((c) => c.name === 'ytmp3');
+  return ytmp3.execute({ ...ctx, text: query });
+}
+
+async function videoCmd(ctx) {
+  if (!ctx.text) return ctx.reply(`Usage: *${ctx.prefix}video <naam ya YouTube link>*`);
+  if (!Innertube) return ctx.reply(NOT_READY_MSG);
+  await ctx.react('🎬');
+  try {
+    const found = await resolveVideoId(ctx.text);
+    if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
+    const got = await downloadMediaSmart(found.id, found.title, 'video');
+    const media = got.buffer ? { video: got.buffer } : { video: { url: got.url } };
+    await ctx.sock.sendMessage(ctx.from, {
+      ...media,
+      mimetype: 'video/mp4',
+      caption: (got.title || found.title || '').slice(0, 200),
+    }, { quoted: ctx.msg });
+    await ctx.react('✅');
+  } catch (err) {
+    console.error('[VIDEO] error:', err.message);
+    await ctx.reply(`❌ Video download nahi ho saka: ${err.message}`);
+  }
+}
+
 const commands = [
   {
     name: 'tiktok',
@@ -244,7 +300,28 @@ const commands = [
       // NOTE: Ye abhi bhi placeholder hai — asal download implement nahi hua.
       // Agar isay bhi chalana hai to bata dein, isay bhi ytmp3 jaisa theek kar denge.
     }
-  }
+  },
+  {
+    name: 'play',
+    aliases: [],
+    description: 'Gaana naam se dhoond kar audio bhejta hai (.song jaisa)',
+    category: 'downloader',
+    async execute(ctx) { return songLike(ctx, ''); },
+  },
+  {
+    name: 'naat',
+    aliases: [],
+    description: 'Naat dhoond kar audio bhejta hai',
+    category: 'downloader',
+    async execute(ctx) { return songLike(ctx, ' naat'); },
+  },
+  {
+    name: 'video',
+    aliases: ['ytvideo'],
+    description: 'YouTube video naam ya link se bhejta hai (FastSaver)',
+    category: 'downloader',
+    async execute(ctx) { return videoCmd(ctx); },
+  },
 ];
 
 module.exports = commands;
