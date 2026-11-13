@@ -99,6 +99,31 @@ function youtubeHint(msg) {
   return '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner: YOUTUBE_COOKIE Config Var mein logged-in account ki cookie dalein._';
 }
 
+// .song: pehle FastSaverAPI (YouTube ka server IP block nahi hota). Fail ho to purana youtubei tareeqa.
+const fastsaver = require('../lib/fastsaver');
+async function downloadAudioSmart(videoId, titleHint) {
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  if (!fastsaver.hasKeys()) {
+    const r = await downloadAudio(videoId);
+    return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
+  }
+  try {
+    const link = await fastsaver.fetchAudioLink(ytUrl);
+    let buffer = null;
+    try { buffer = await fastsaver.downloadAudioBuffer(link); }
+    catch (e) { console.warn('[SONG] audio file download fail, link se bhejenge:', e.message); }
+    return { buffer, url: link, title: titleHint, durationSec: 0 };
+  } catch (fsErr) {
+    console.error('[SONG] FastSaver fail:', fsErr.message);
+    try {
+      const r = await downloadAudio(videoId);
+      return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
+    } catch (ytErr) {
+      throw new Error(`FastSaver: ${fsErr.message} | YouTube: ${ytErr.message}`);
+    }
+  }
+}
+
 const NOT_READY_MSG = '❌ Is feature ke liye "youtubei.js" package abhi deploy nahi hui. package.json update karke dobara deploy karein.';
 const MAX_DURATION_SEC = 15 * 60; // 15 minute — Heroku/WhatsApp par bohot lambi file bhejna mushkil hota hai
 
@@ -149,15 +174,16 @@ const commands = [
         const found = await resolveVideoId(ctx.text);
         if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
 
-        const { buffer, title, durationSec } = await downloadAudio(found.id);
-        if (durationSec > MAX_DURATION_SEC) {
-          return ctx.reply(`❌ *${title}* 15 minute se lamba hai, chhota gaana try karein.`);
+        const got = await downloadAudioSmart(found.id, found.title);
+        if (got.durationSec > MAX_DURATION_SEC) {
+          return ctx.reply(`❌ *${got.title}* 15 minute se lamba hai, chhota gaana try karein.`);
         }
 
+        const media = got.buffer ? { audio: got.buffer } : { audio: { url: got.url } };
         await ctx.sock.sendMessage(ctx.from, {
-          audio: buffer,
+          ...media,
           mimetype: 'audio/mp4',
-          fileName: `${(title || 'audio').slice(0, 60)}.m4a`,
+          fileName: `${(got.title || found.title || 'audio').slice(0, 60)}.m4a`,
         }, { quoted: ctx.msg });
         await ctx.react('✅');
       } catch (err) {

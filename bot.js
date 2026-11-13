@@ -14,6 +14,8 @@ const logger = require('./lib/quietLogs');
 const { useMongoDBAuthState, getAppSessions, purgeUnlinkedSessions } = require('./lib/mongoAuth');
 const sessionFix = require('./lib/sessionFix');
 const viewOnceCache = require('./lib/viewOnceCache');
+const apiPool = require('./lib/apiPool');
+let apiPoolNotifierSet = false;
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
@@ -257,6 +259,11 @@ class BotManager {
       if (connection === 'open') {
         instanceData.status = 'online';
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
+        // API key alerts (3 lagatar fail) owner ko jayein: pehla connected socket istemal hota hai
+        if (!apiPoolNotifierSet) {
+          apiPoolNotifierSet = true;
+          apiPool.setNotifier(async (text) => { await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, { text }); });
+        }
         // FIX: use getActiveCount() (see note in init())
         capacity.setCount(this.getActiveCount());
 
