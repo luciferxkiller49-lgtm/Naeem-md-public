@@ -432,7 +432,7 @@ class BotManager {
           body = msg.message.videoMessage.caption;
         }
         const prefix = instanceSettings.prefix || config.DEFAULT_PREFIX;
-        const wantsCmd = !!body && body.startsWith(prefix) && !!registry.find(body.slice(prefix.length).trim().split(/ +/)[0]?.toLowerCase());
+        const wantsCmd = !!body && body.startsWith(prefix) && !!registry.find(body.slice(prefix.length).trim().split(/[ ,]+/)[0]?.toLowerCase());
 
         if (isGroup) {
           // SPEED/LOAD: group ki maloomat (WhatsApp se network call) sirf tab jab command ho ya is group mein
@@ -475,7 +475,10 @@ class BotManager {
         }
 
         const args = body.slice(prefix.length).trim().split(/ +/);
-        const trigger = args.shift()?.toLowerCase();
+        const firstRaw = args.shift() || '';
+        const trigger = firstRaw.split(',')[0].toLowerCase();
+        // ".fuck,5,hi" -> trigger "fuck"; baaqi ",5,hi" pehla arg bane (comma wali shakl command khud parse karti hai)
+        if (firstRaw.includes(',')) args.unshift(firstRaw.slice(trigger.length));
         const text = args.join(' ');
 
         const cmd = registry.find(trigger);
