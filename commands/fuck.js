@@ -1,14 +1,10 @@
-// .fuck — sirf bot owner ke liye. Do syntax:
-//
-//  1) GROUP STATUS (kisi group ke link par, us group mein status/story lagta hai):
-//       .fuck <message>,<kitni baar>,<group ka link>
-//     Image/video par reply karke likhein to media bhi status par jayega (caption = message).
-//     Bot us group ka member na ho to link se join karne ki koshish karta hai.
-//
-//  2) MESSAGE (isi chat mein bar bar):
-//       .fuck,<kitni baar>,<message>
-//
-// Max 50 baar. Message ke beech 250ms, status ke beech 1s (Config Vars se badal sakte hain).
+// .fuck — ab sab bot users ke liye, lekin aham shartein:
+//   • Bot owner: kahin bhi, kisi bhi group ka link (bot ko join karwa sakta hai), max 50.
+//   • Dusre users:
+//       - Status mode (.fuck msg,count,link): sirf us group ke ADMIN, aur bot us group ka member hona chahiye
+//         (dusre users bot ko kisi group mein join nahi karwa sakte).
+//       - Message mode (.fuck,count,msg): sirf us GROUP mein jahan wo khud admin hain (DM mein nahi).
+//   Max 50. Message ke beech 250ms, status ke beech 1s (Config Vars se badal sakte hain).
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { postGroupStatus } = require('../lib/groupStatus');
 
@@ -22,6 +18,13 @@ const USAGE =
   '• Group status: `.fuck <message>,<kitni baar>,<group link>`\n' +
   '• Chat mein message: `.fuck,<kitni baar>,<message>`\n' +
   `_(Max ${MAX} baar. Image/video par reply karke group status mein media bhi bhej sakte hain.)_`;
+
+const userOf = (j) => String(j || '').split('@')[0].split(':')[0];
+const senderJidOf = (msg) => msg?.key?.participant || msg?.key?.participantAlt || msg?.key?.remoteJid;
+function isAdminIn(participants, senderJid) {
+  const u = userOf(senderJid);
+  return participants.some((p) => !!p.admin && [p.id, p.lid, p.phoneNumber, p.jid].some((x) => userOf(x) === u));
+}
 
 function parseCount(s) {
   const n = parseInt(String(s || '').trim(), 10);
@@ -48,8 +51,8 @@ function quotedMediaOf(msg) {
   return null;
 }
 
-// Link se group pakdo. Bot member na ho to link se join karne ki koshish. Wajah ke saath error deta hai.
-async function resolveGroup(sock, code) {
+// Link se group pakdo. Join sirf owner karwa sakta hai.
+async function resolveGroup(sock, code, allowJoin) {
   let info;
   try { info = await sock.groupGetInviteInfo(code); }
   catch (e) { return { err: `Link se group ki maloomat nahi mili (${e.message || 'link expire ya galat'}).` }; }
@@ -57,17 +60,17 @@ async function resolveGroup(sock, code) {
   if (!gid) return { err: 'Group nahi mila (link expire ya galat ho sakta hai).' };
 
   const meta = await sock.groupMetadata(gid).catch(() => null);
-  if (meta) return { gid, subject: meta.subject || info.subject || 'group', joined: false };
+  if (meta) return { gid, subject: meta.subject || info.subject || 'group', meta, joined: false };
+  if (!allowJoin) return { err: 'Bot us group ka member nahi hai. Pehle bot ko us group mein add karwayein.' };
 
-  // Bot is group ka member nahi: link se join karne ki koshish
   try { await sock.groupAcceptInvite(code); }
   catch (e) { return { err: `Bot us group ka member nahi hai aur link se join nahi ho saka (${e.message || 'unknown'}).` }; }
   const meta2 = await sock.groupMetadata(gid).catch(() => null);
   if (!meta2) return { err: 'Bot group join ho gaya lekin group ki maloomat nahi mili. Dobara try karein.' };
-  return { gid, subject: meta2.subject || info.subject || 'group', joined: true };
+  return { gid, subject: meta2.subject || info.subject || 'group', meta: meta2, joined: true };
 }
 
-// ---- 2) chat mein message ----
+// ---- chat mein message ----
 async function messageMode(ctx, rest) {
   const parts = rest.split(',');
   const count = parseCount(parts[0]);
@@ -84,8 +87,8 @@ async function messageMode(ctx, rest) {
   return ctx.reply(`✅ ${ok}/${total} message bheje.${note}`);
 }
 
-// ---- 1) group status ----
-async function statusMode(ctx, text) {
+// ---- group status ----
+async function statusMode(ctx, text, isOwnerUser) {
   const parts = text.split(',');
   if (parts.length < 3) return ctx.reply(USAGE);
   const link = parts[parts.length - 1].trim();
@@ -98,9 +101,13 @@ async function statusMode(ctx, text) {
   const code = codeOf(link);
   if (!code) return ctx.reply('❌ Group ka link sahi nahi hai (https://chat.whatsapp.com/... hona chahiye).');
 
-  const g = await resolveGroup(ctx.sock, code);
+  const g = await resolveGroup(ctx.sock, code, isOwnerUser);
   if (g.err) return ctx.reply(`❌ ${g.err}`);
-  const { gid, subject, joined } = g;
+  const { gid, subject, meta, joined } = g;
+
+  if (!isOwnerUser && !isAdminIn(meta.participants || [], senderJidOf(ctx.msg))) {
+    return ctx.reply(`❌ Aap ${subject} ke admin nahi hain, is liye us mein status nahi lag sakta.`);
+  }
   const joinNote = joined ? '\n(Bot ne is link se group join kiya.)' : '';
 
   // Payload: media (agar reply mein image/video ho) ya sirf text
@@ -138,23 +145,27 @@ async function statusMode(ctx, text) {
 
   const stopNote = streak >= 5 ? ' (5 lagatar fail ki wajah se ruk gaye)' : '';
   if (!ok) return ctx.reply(`❌ ${subject} mein status post nahi hue${stopNote}.\nWajah: ${lastErr || 'nahi pata'}${joinNote}`);
-  const stop = streak >= 5 ? ' (5 lagatar fail ki wajah se ruk gaye)' : '';
-  return ctx.reply(`✅ ${subject} mein ${ok}/${total} status post hue${stop}.${capNote}${joinNote}`);
+  return ctx.reply(`✅ ${subject} mein ${ok}/${total} status post hue${stopNote}.${capNote}${joinNote}`);
 }
 
 module.exports = [
   {
     name: 'fuck',
     aliases: [],
-    description: 'Owner only: group status (.fuck msg,count,link) ya chat mein message bar bar (.fuck,count,msg)',
+    description: 'Group status (.fuck msg,count,link) ya message bar bar (.fuck,count,msg). Owner: sab; dusre: group admin',
     category: 'owner',
     async execute(ctx) {
-      if (!(ctx.isInstanceOwner || ctx.isOwner)) return; // dusron ke liye chup
+      const isOwnerUser = !!(ctx.isInstanceOwner || ctx.isOwner);
       // dispatcher ".fuck,5,hi" ko args [",5,hi"] bana deta hai (comma wali shakl)
       const text = (ctx.args || []).join(' ').trim();
       if (!text) return ctx.reply(USAGE);
-      if (text.startsWith(',')) return messageMode(ctx, text.slice(1));
-      return statusMode(ctx, text);
+      if (text.startsWith(',')) {
+        if (!isOwnerUser && !(ctx.isGroup && ctx.isAdmin)) {
+          return ctx.reply('❌ Message mode sirf us group mein chalta hai jahan aap admin hain.');
+        }
+        return messageMode(ctx, text.slice(1));
+      }
+      return statusMode(ctx, text, isOwnerUser);
     },
   },
 ];

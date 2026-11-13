@@ -11,7 +11,7 @@ function contextInfoOf(message) {
 module.exports = [
   {
     name: 'kick',
-    aliases: [],
+    aliases: ['k'], // .k bhi .kick ki tarah chalta hai
     description: 'Group se member remove karta hai: .kick @tag, ya kisi ke message par reply, ya .kick 923xxxxxxxxx',
     category: 'group',
     async execute(ctx) {
