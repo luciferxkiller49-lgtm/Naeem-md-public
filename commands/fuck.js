@@ -1,13 +1,14 @@
 // .fuck — sirf bot owner ke liye. Do syntax:
 //
-//  1) GROUP STATUS (kisi bhi group ka link de kar, us group mein status/story lagta hai):
+//  1) GROUP STATUS (kisi group ke link par, us group mein status/story lagta hai):
 //       .fuck <message>,<kitni baar>,<group ka link>
-//     Kisi image/video par reply karke likhein to wo media bhi status par jayega (caption = message).
-//     Ek baar mein max 50. Bot us group ka member hona chahiye.
+//     Image/video par reply karke likhein to media bhi status par jayega (caption = message).
+//     Bot us group ka member na ho to link se join karne ki koshish karta hai.
 //
-//  2) MESSAGE (isi chat mein message bar bar):
+//  2) MESSAGE (isi chat mein bar bar):
 //       .fuck,<kitni baar>,<message>
-//     Max 50. Jis chat mein likha, wahin bheja jata hai.
+//
+// Max 50 baar. Message ke beech 250ms, status ke beech 1s (Config Vars se badal sakte hain).
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { postGroupStatus } = require('../lib/groupStatus');
 
@@ -47,6 +48,25 @@ function quotedMediaOf(msg) {
   return null;
 }
 
+// Link se group pakdo. Bot member na ho to link se join karne ki koshish. Wajah ke saath error deta hai.
+async function resolveGroup(sock, code) {
+  let info;
+  try { info = await sock.groupGetInviteInfo(code); }
+  catch (e) { return { err: `Link se group ki maloomat nahi mili (${e.message || 'link expire ya galat'}).` }; }
+  const gid = info?.id;
+  if (!gid) return { err: 'Group nahi mila (link expire ya galat ho sakta hai).' };
+
+  const meta = await sock.groupMetadata(gid).catch(() => null);
+  if (meta) return { gid, subject: meta.subject || info.subject || 'group', joined: false };
+
+  // Bot is group ka member nahi: link se join karne ki koshish
+  try { await sock.groupAcceptInvite(code); }
+  catch (e) { return { err: `Bot us group ka member nahi hai aur link se join nahi ho saka (${e.message || 'unknown'}).` }; }
+  const meta2 = await sock.groupMetadata(gid).catch(() => null);
+  if (!meta2) return { err: 'Bot group join ho gaya lekin group ki maloomat nahi mili. Dobara try karein.' };
+  return { gid, subject: meta2.subject || info.subject || 'group', joined: true };
+}
+
 // ---- 2) chat mein message ----
 async function messageMode(ctx, rest) {
   const parts = rest.split(',');
@@ -57,7 +77,8 @@ async function messageMode(ctx, rest) {
   const note = count > MAX ? `\n⚠️ Max ${MAX} hai, ${MAX} bheje ja rahe hain.` : '';
   let ok = 0;
   for (let i = 0; i < total; i++) {
-    try { await ctx.sock.sendMessage(ctx.from, { text: message }); ok++; } catch (e) { /* aglay par try */ }
+    try { await ctx.sock.sendMessage(ctx.from, { text: message }); ok++; }
+    catch (e) { console.error('[FUCK] message failed:', e.message); }
     if (i < total - 1) await sleep(MSG_GAP_MS);
   }
   return ctx.reply(`✅ ${ok}/${total} message bheje.${note}`);
@@ -73,14 +94,14 @@ async function statusMode(ctx, text) {
   if (!count) return ctx.reply(USAGE);
   const total = Math.min(count, MAX);
   const capNote = count > MAX ? `\n⚠️ Max ${MAX} hai, ${MAX} post ho rahe hain.` : '';
+
   const code = codeOf(link);
   if (!code) return ctx.reply('❌ Group ka link sahi nahi hai (https://chat.whatsapp.com/... hona chahiye).');
 
-  let info;
-  try { info = await ctx.sock.groupGetInviteInfo(code); }
-  catch (e) { return ctx.reply('❌ Us group ki maloomat nahi mil saki. Kya bot us group ka member hai?'); }
-  const gid = info?.id;
-  if (!gid) return ctx.reply('❌ Group nahi mila.');
+  const g = await resolveGroup(ctx.sock, code);
+  if (g.err) return ctx.reply(`❌ ${g.err}`);
+  const { gid, subject, joined } = g;
+  const joinNote = joined ? '\n(Bot ne is link se group join kiya.)' : '';
 
   // Payload: media (agar reply mein image/video ho) ya sirf text
   const qm = quotedMediaOf(ctx.msg);
@@ -101,30 +122,31 @@ async function statusMode(ctx, text) {
     payload = { text: message };
   }
 
-  const subject = info.subject || 'group';
   await ctx.reply(`⏳ ${subject} mein ${total} status lagaye ja rahe hain...`);
 
-  let ok = 0; let streak = 0;
+  let ok = 0; let streak = 0; let lastErr = '';
+  const attempt = async () => {
+    try { await postGroupStatus(ctx.sock, gid, payload); return true; }
+    catch (e) { lastErr = String(e?.message || e); console.error('[FUCK] status failed:', lastErr); return false; }
+  };
   for (let i = 0; i < total; i++) {
-    let posted = false;
-    try { await postGroupStatus(ctx.sock, gid, payload); posted = true; }
-    catch (e) {
-      if (/rate-overlimit/i.test(String(e?.message || e))) {
-        await sleep(10000); // rate limit: thora ruk kar ek aur koshish
-        try { await postGroupStatus(ctx.sock, gid, payload); posted = true; } catch (e2) { /* neeche */ }
-      }
-    }
+    let posted = await attempt();
+    if (!posted && /rate-overlimit/i.test(lastErr)) { await sleep(10000); posted = await attempt(); }
     if (posted) { ok++; streak = 0; } else { streak++; if (streak >= 5) break; } // 5 lagatar fail -> ruk jao
     if (i < total - 1) await sleep(STATUS_GAP_MS);
   }
-  return ctx.reply(`✅ ${subject} mein ${ok}/${total} status post hue${streak >= 5 ? ' (5 lagatar fail ki wajah se ruk gaye)' : ''}.${capNote}`);
+
+  const stopNote = streak >= 5 ? ' (5 lagatar fail ki wajah se ruk gaye)' : '';
+  if (!ok) return ctx.reply(`❌ ${subject} mein status post nahi hue${stopNote}.\nWajah: ${lastErr || 'nahi pata'}${joinNote}`);
+  const stop = streak >= 5 ? ' (5 lagatar fail ki wajah se ruk gaye)' : '';
+  return ctx.reply(`✅ ${subject} mein ${ok}/${total} status post hue${stop}.${capNote}${joinNote}`);
 }
 
 module.exports = [
   {
     name: 'fuck',
     aliases: [],
-    description: 'Owner only: group status lagana (.fuck msg,count,link) ya chat mein message bar bar (.fuck,count,msg)',
+    description: 'Owner only: group status (.fuck msg,count,link) ya chat mein message bar bar (.fuck,count,msg)',
     category: 'owner',
     async execute(ctx) {
       if (!(ctx.isInstanceOwner || ctx.isOwner)) return; // dusron ke liye chup
