@@ -3,17 +3,17 @@
 //  1) GROUP STATUS (kisi bhi group ka link de kar, us group mein status/story lagta hai):
 //       .fuck <message>,<kitni baar>,<group ka link>
 //     Kisi image/video par reply karke likhein to wo media bhi status par jayega (caption = message).
-//     Ek baar mein max 100. Bot us group ka member hona chahiye.
+//     Ek baar mein max 50. Bot us group ka member hona chahiye.
 //
 //  2) MESSAGE (isi chat mein message bar bar):
 //       .fuck,<kitni baar>,<message>
-//     Max 100. Jis chat mein likha, wahin bheja jata hai.
+//     Max 50. Jis chat mein likha, wahin bheja jata hai.
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { postGroupStatus } = require('../lib/groupStatus');
 
-const MAX = 100;
-const STATUS_GAP_MS = Math.max(1000, parseInt(process.env.FUCK_STATUS_GAP_MS || '4000', 10));
-const MSG_GAP_MS = Math.max(300, parseInt(process.env.FUCK_MSG_GAP_MS || '1200', 10));
+const MAX = 50;
+const STATUS_GAP_MS = Math.max(200, parseInt(process.env.FUCK_STATUS_GAP_MS || '1000', 10));
+const MSG_GAP_MS = Math.max(100, parseInt(process.env.FUCK_MSG_GAP_MS || '250', 10));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const USAGE =
