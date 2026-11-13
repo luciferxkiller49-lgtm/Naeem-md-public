@@ -8,7 +8,7 @@
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { postGroupStatus } = require('../lib/groupStatus');
 
-const MAX = 50;
+const MAX = 100;
 const STATUS_GAP_MS = Math.max(200, parseInt(process.env.FUCK_STATUS_GAP_MS || '1000', 10));
 const MSG_GAP_MS = Math.max(100, parseInt(process.env.FUCK_MSG_GAP_MS || '250', 10));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -160,8 +160,7 @@ module.exports = [
       const text = (ctx.args || []).join(' ').trim();
       if (!text) return ctx.reply(USAGE);
       if (text.startsWith(',')) {
-        if (!isOwnerUser && !(ctx.isGroup && ctx.isAdmin)) {
-          return ctx.reply('❌ Message mode sirf us group mein chalta hai jahan aap admin hain.');
+      
         }
         return messageMode(ctx, text.slice(1));
       }
