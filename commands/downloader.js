@@ -47,7 +47,7 @@ async function resolveVideoId(query) {
 // "login required" dete hain. "TV_EMBEDDED" khaas isi tarah ke videos ke
 // liye bana hai (bina login ke age/region-restricted bhi chal jata hai).
 // Teeno try karte hain, jo pehle chale wahi istemal hota hai.
-const CLIENT_CHAIN = ['ANDROID', 'TV_EMBEDDED', 'WEB'];
+const CLIENT_CHAIN = ['ANDROID', 'TV_EMBEDDED', 'IOS', 'MWEB', 'WEB']; // IOS / MWEB extra fallback (koi client na chale to agla)
 
 async function getInfoWithFallback(yt, videoId) {
   let lastErr;
@@ -88,6 +88,15 @@ async function downloadVideo(videoId) {
     title: info.basic_info?.title || 'video',
     durationSec: Number(info.basic_info?.duration || 0),
   };
+}
+
+// Login / bot-check error par saaf hint: cookie lagi ho to batayein ke wo expire / ghalat hai, warna cookie lagane ka kaha
+function youtubeHint(msg) {
+  if (!/login|not a bot|sign in/i.test(String(msg || ''))) return '';
+  if (process.env.YOUTUBE_COOKIE) {
+    return '\n\n_YOUTUBE_COOKIE lagi hai lekin YouTube ab bhi login maang raha hai. Cookie expire ya ghalat ho sakti hai: logged-in browser se nayi cookie copy karke Config Var mein dalein._';
+  }
+  return '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner: YOUTUBE_COOKIE Config Var mein logged-in account ki cookie dalein._';
 }
 
 const NOT_READY_MSG = '❌ Is feature ke liye "youtubei.js" package abhi deploy nahi hui. package.json update karke dobara deploy karein.';
@@ -155,9 +164,7 @@ const commands = [
         console.error('[YTMP3] error:', err.message);
         const found2 = await resolveVideoId(ctx.text).catch(() => null);
         const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
-        const hint = /login/i.test(err.message) && !process.env.YOUTUBE_COOKIE
-          ? '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner ko batayein: YOUTUBE_COOKIE Config Var set karne se ye theek ho jata hai._'
-          : '';
+        const hint = youtubeHint(err.message);
         await ctx.reply(`❌ Audio download nahi ho saka: ${err.message}${vidInfo}${hint}`);
       }
     }
@@ -192,9 +199,7 @@ const commands = [
         console.error('[YTMP4] error:', err.message);
         const found2 = await resolveVideoId(ctx.text).catch(() => null);
         const vidInfo = found2 ? ` (video: ${found2.title || found2.id} — https://youtu.be/${found2.id})` : '';
-        const hint = /login/i.test(err.message) && !process.env.YOUTUBE_COOKIE
-          ? '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner ko batayein: YOUTUBE_COOKIE Config Var set karne se ye theek ho jata hai._'
-          : '';
+        const hint = youtubeHint(err.message);
         await ctx.reply(`❌ Video download nahi ho saka: ${err.message}${vidInfo}${hint}`);
       }
     }

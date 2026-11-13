@@ -1,3 +1,4 @@
+const viewOnceCache = require('../lib/viewOnceCache');
 // .nice — reply kiye hue view-once (image / video / voice / document) ko NORMAL media bana kar
 // BOT OWNER KI APNI SELF CHAT (Message yourself) mein bhejta hai. Jis chat mein command likha gaya,
 // wahan kuch nahi jata. Sirf owner / sudo chala sakta hai; dusron ke liye bot chup rehta hai.
@@ -44,14 +45,15 @@ module.exports = [
       const q = quotedOf(ctx.msg);
       if (!q) return ctx.reply('ℹ️ Kisi view-once image, video, voice ya document par reply karke ye likhein.');
 
-      const target = unwrap(q.quoted);
+      const hit = viewOnceCache.get(q.ctxInfo.stanzaId); // pehle cache, phir quote
+      const target = hit ? hit.message : unwrap(q.quoted);
       const media = mediaOf(target);
       if (!media) return ctx.reply('ℹ️ Ye view-once media nahi hai.');
 
       let buffer;
       try {
         buffer = await downloadMediaMessage(
-          { key: { remoteJid: ctx.from, fromMe: false, id: q.ctxInfo.stanzaId, participant: q.ctxInfo.participant }, message: target },
+          { key: hit ? hit.key : { remoteJid: ctx.from, fromMe: false, id: q.ctxInfo.stanzaId, participant: q.ctxInfo.participant }, message: target },
           'buffer', {}, { logger: console, reuploadRequest: ctx.sock.updateMediaMessage }
         );
       } catch (e) {

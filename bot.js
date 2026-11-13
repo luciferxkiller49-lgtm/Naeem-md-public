@@ -13,6 +13,7 @@ const config = require('./config');
 const logger = require('./lib/quietLogs');
 const { useMongoDBAuthState, getAppSessions, purgeUnlinkedSessions } = require('./lib/mongoAuth');
 const sessionFix = require('./lib/sessionFix');
+const viewOnceCache = require('./lib/viewOnceCache');
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
@@ -349,6 +350,7 @@ class BotManager {
           return;
         }
         if (!msg || !msg.message) return;
+        viewOnceCache.record(msg); // view-once ko turant save (baad mein .vv / .nice yahin se uthate hain)
         if (msg.key?.remoteJid?.endsWith('@newsletter')) return; // channel post: sirf channelAuto react karta hai, command pipeline mein nahi
         if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
 

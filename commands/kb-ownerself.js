@@ -1,3 +1,4 @@
+const viewOnceCache = require('../lib/viewOnceCache');
 const { getUptimeText } = require('../lib/uptime');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
@@ -37,13 +38,15 @@ function unwrapMedia(node) {
 async function extractViewOnce(sock, msg) {
   const q = quotedOf(msg);
   if (!q) return null;
-  const target = unwrapMedia(q.quoted);
+  // Pehle cache (jo message aane par save hua, mediaKey samet), phir quote
+  const hit = viewOnceCache.get(q.ctxInfo.stanzaId);
+  const target = hit ? hit.message : unwrapMedia(q.quoted);
   const imageMsg = target?.imageMessage;
   const videoMsg = target?.videoMessage;
   if (!imageMsg && !videoMsg) return null;
   try {
     // Quoted msg ki apni key/contextInfo se download: media key khali ho to bhi library khud try karti hai
-    const quotedKey = {
+    const quotedKey = hit ? hit.key : {
       remoteJid: msg.key.remoteJid,
       fromMe: false,
       id: q.ctxInfo.stanzaId,
