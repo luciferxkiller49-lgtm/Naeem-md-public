@@ -1,4 +1,3 @@
-const os = require('os');
 const config = require('../config');
 const { channelContext } = require('../lib/channel');
 
@@ -10,19 +9,14 @@ const commands = [
     category: 'general',
     async execute(ctx) {
       const start = Date.now();
-      await ctx.react('⚡');
+      try { await ctx.react('⚡'); } catch (e) { /* reaction na lage to bhi jawab zaroor jaye */ }
       const latency = Date.now() - start;
-      const uptime = Math.floor(process.uptime());
-      const hours = Math.floor(uptime / 3600);
-      const minutes = Math.floor((uptime % 3600) / 60);
-      const seconds = uptime % 60;
 
       const replyText = ` Pong! ⚡\n` +
         `• *Speed:* ${latency}ms\n` +
-        `• *Server:* ${config.SERVER_NAME || `Server #${config.APP_ID}`}\n` +
-        `• *Uptime:* ${hours}h ${minutes}m ${seconds}s`;
+        `• *Server:* Server ${config.APP_ID}`;
 
-      // Menu jaisa: channel ka "forwarded" tag saath
+      // Menu ki tarah channel ka "forwarded" tag. Lookup time-limited hai, isliye ye jawab ko rokta nahi.
       const contextInfo = await channelContext(ctx.sock).catch(() => undefined);
       await ctx.sock.sendMessage(ctx.from, { text: replyText, contextInfo }, { quoted: ctx.msg });
     }
