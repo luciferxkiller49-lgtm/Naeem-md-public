@@ -12,21 +12,45 @@ function idFromNumber(n) {
   return (n || '').replace(/[^0-9]/g, '');
 }
 
+// Quote kisi bhi message type mein ho sakta hai (text, extended, image/video caption, ephemeral wrapper)
+function quotedOf(msg) {
+  const m = msg?.message || {};
+  for (const k of ['extendedTextMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage', 'conversation']) {
+    const c = m[k]?.contextInfo || m[k]?.contextInfo;
+    if (c?.quotedMessage) return { quoted: c.quotedMessage, ctxInfo: c };
+  }
+  return null;
+}
+
+// Wrappers ko andar tak khol kar asli media dhoondhta hai (view-once v1/v2/extension, ephemeral, document-with-caption)
+function unwrapMedia(node) {
+  let m = node;
+  for (let i = 0; i < 6 && m; i++) {
+    const inner = m.viewOnceMessage?.message || m.viewOnceMessageV2?.message || m.viewOnceMessageV2Extension?.message ||
+      m.ephemeralMessage?.message || m.documentWithCaptionMessage?.message;
+    if (!inner) break;
+    m = inner;
+  }
+  return m || {};
+}
+
 async function extractViewOnce(sock, msg) {
-  const quoted = msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-  if (!quoted) return null;
-  const target =
-    quoted.viewOnceMessageV2Extension?.message ||
-    quoted.viewOnceMessageV2?.message ||
-    quoted.viewOnceMessage?.message ||
-    quoted;
+  const q = quotedOf(msg);
+  if (!q) return null;
+  const target = unwrapMedia(q.quoted);
   const imageMsg = target?.imageMessage;
   const videoMsg = target?.videoMessage;
   if (!imageMsg && !videoMsg) return null;
-  if (!(imageMsg || videoMsg).mediaKey?.length) return null; // media key khali (pehle hi khul chuka / purana) — download mumkin nahi
   try {
+    // Quoted msg ki apni key/contextInfo se download: media key khali ho to bhi library khud try karti hai
+    const quotedKey = {
+      remoteJid: msg.key.remoteJid,
+      fromMe: false,
+      id: q.ctxInfo.stanzaId,
+      participant: q.ctxInfo.participant,
+    };
     const buffer = await downloadMediaMessage(
-      { key: msg.key, message: target },
+      { key: quotedKey, message: target },
       'buffer',
       {},
       { logger: console, reuploadRequest: sock.updateMediaMessage }

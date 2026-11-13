@@ -17,6 +17,7 @@ if (!PANEL_KEY) {
 module.exports = {
   PORT: process.env.PORT || 5000,
   APP_ID: String(process.env.APP_ID || '1'), // 1 to 10, one per Heroku dyno
+  SERVER_NAME: process.env.SERVER_NAME || '', // optional: .ping mein dikhane ka naam (khali = 'Server #N')
   MONGODB_URI: process.env.MONGODB_URI || '',
   PANEL_KEY,
 
