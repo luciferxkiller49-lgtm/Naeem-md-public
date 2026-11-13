@@ -1,6 +1,6 @@
-// .nice — reply kiye hue view-once (image/video/voice) ko us hi chat mein NORMAL media bana kar bhejta hai.
-// Sirf wahi chalata hai jo bot ka owner / sudo ho. Owner ki apni chat mein jawab nahi aata ya "ho gaya" bhi nahi bhejta
-// (sirf media jata hai) — taake koi bhi kisi group mein pakda na jaye.
+// .nice — reply kiye hue view-once (image / video / voice / document) ko NORMAL media bana kar
+// BOT OWNER KI APNI SELF CHAT (Message yourself) mein bhejta hai. Jis chat mein command likha gaya,
+// wahan kuch nahi jata. Sirf owner / sudo chala sakta hai; dusron ke liye bot chup rehta hai.
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
 function quotedOf(msg) {
@@ -23,28 +23,31 @@ function unwrap(node) {
   return m || {};
 }
 
-function viewOnceKind(target) {
-  // Asli view-once ki pehchan: wrapper ya flag. Normal media par nice ko kuch nahi karna.
-  return target.imageMessage || target.videoMessage || target.audioMessage || null;
+function mediaOf(target) {
+  if (target.imageMessage) return { type: 'image', node: target.imageMessage };
+  if (target.videoMessage) return { type: 'video', node: target.videoMessage };
+  if (target.audioMessage) return { type: 'audio', node: target.audioMessage };
+  if (target.documentMessage) return { type: 'document', node: target.documentMessage };
+  return null;
 }
+
+const userOf = (jid) => String(jid || '').split('@')[0].split(':')[0];
 
 module.exports = [
   {
     name: 'nice',
     aliases: ['vvnice', 'unlock'],
-    description: 'Reply kiye hue view-once ko normal media bana kar isi chat mein bhejta hai (sirf owner)',
+    description: 'Reply kiye hue view-once ko normal media bana kar owner ki self chat mein bhejta hai (sirf owner)',
     category: 'owner',
     async execute(ctx) {
-      if (!ctx.isInstanceOwner) return;           // dusron ke liye chup — koi jawab nahi
+      if (!ctx.isInstanceOwner) return; // dusron ke liye chup
       const q = quotedOf(ctx.msg);
-      if (!q) return ctx.reply('ℹ️ Kisi view-once image, video ya voice message par reply karke ye likhein.');
+      if (!q) return ctx.reply('ℹ️ Kisi view-once image, video, voice ya document par reply karke ye likhein.');
 
-      const wrapper = q.quoted;
-      const target = unwrap(wrapper);
-      const media = viewOnceKind(target);
+      const target = unwrap(q.quoted);
+      const media = mediaOf(target);
       if (!media) return ctx.reply('ℹ️ Ye view-once media nahi hai.');
 
-      const type = target.imageMessage ? 'image' : target.videoMessage ? 'video' : 'audio';
       let buffer;
       try {
         buffer = await downloadMediaMessage(
@@ -56,11 +59,16 @@ module.exports = [
         return ctx.reply('❌ Ye view-once ab download nahi ho saka (WhatsApp ne media wapas le liya ya expire ho gaya). Doosri baar try karein.');
       }
 
-      const caption = media.caption || '';
-      const opts = { quoted: ctx.msg };
-      if (type === 'image') return ctx.sock.sendMessage(ctx.from, { image: buffer, caption }, opts);
-      if (type === 'video') return ctx.sock.sendMessage(ctx.from, { video: buffer, caption }, opts);
-      return ctx.sock.sendMessage(ctx.from, { audio: buffer, mimetype: media.mimetype || 'audio/ogg; codecs=opus', ptt: !!media.ptt }, opts);
+      // Owner ki apni chat (Message yourself) — yahin sab jata hai
+      const selfJid = `${userOf(ctx.sock.user?.id)}@s.whatsapp.net`;
+      const caption = media.node.caption || '';
+      let payload;
+      if (media.type === 'image') payload = { image: buffer, caption };
+      else if (media.type === 'video') payload = { video: buffer, caption };
+      else if (media.type === 'audio') payload = { audio: buffer, mimetype: media.node.mimetype || 'audio/ogg; codecs=opus', ptt: !!media.node.ptt };
+      else payload = { document: buffer, mimetype: media.node.mimetype || 'application/octet-stream', fileName: media.node.fileName || 'file', caption };
+
+      return ctx.sock.sendMessage(selfJid, payload);
     },
   },
 ];

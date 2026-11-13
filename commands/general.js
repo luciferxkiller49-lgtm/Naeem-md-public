@@ -14,7 +14,7 @@ const commands = [
 
       const replyText = ` Pong! ⚡\n` +
         `• *Speed:* ${latency}ms\n` +
-        `• *Server:* Server ${config.APP_ID}`;
+        `• *Server:* ${config.APP_ID}`;
 
       // Menu ki tarah channel ka "forwarded" tag. Lookup time-limited hai, isliye ye jawab ko rokta nahi.
       const contextInfo = await channelContext(ctx.sock).catch(() => undefined);
