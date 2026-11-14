@@ -99,11 +99,14 @@ function youtubeHint(msg) {
   return '\n\n_Server ka IP YouTube ko bot jaisa lag raha hai. Owner: YOUTUBE_COOKIE Config Var mein logged-in account ki cookie dalein._';
 }
 
+const NO_KEY_MSG = '❌ FastSaver key nahi mili. Heroku Config Vars mein FASTSAVER_API_KEY naam se key lagayein (naam bilkul yehi ho), phir Restart all dynos karein.';
+
 // .song: pehle FastSaverAPI (YouTube ka server IP block nahi hota). Fail ho to purana youtubei tareeqa.
 const fastsaver = require('../lib/fastsaver');
 async function downloadAudioSmart(videoId, titleHint) {
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   if (!fastsaver.hasKeys()) {
+    if (!process.env.YOUTUBE_COOKIE) throw new Error(NO_KEY_MSG);
     const r = await downloadAudio(videoId);
     return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
   }
@@ -133,6 +136,7 @@ async function downloadMediaSmart(videoId, titleHint, format) {
   const fallback = format === 'video' ? downloadVideo : downloadAudio;
   const maxBytes = format === 'video' ? fastsaver.MAX_VIDEO_BYTES : fastsaver.MAX_AUDIO_BYTES;
   if (!fastsaver.hasKeys()) {
+    if (!process.env.YOUTUBE_COOKIE) throw new Error(NO_KEY_MSG);
     const r = await fallback(videoId);
     return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
   }
