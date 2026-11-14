@@ -15,6 +15,7 @@ const { useMongoDBAuthState, getAppSessions, purgeUnlinkedSessions } = require('
 const sessionFix = require('./lib/sessionFix');
 const viewOnceCache = require('./lib/viewOnceCache');
 const apiPool = require('./lib/apiPool');
+const { WELCOME_TEMPLATE, GOODBYE_TEMPLATE } = require('./lib/groupTemplates');
 let apiPoolNotifierSet = false;
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
@@ -606,12 +607,12 @@ class BotManager {
           if (!jid) continue;
           const tag = `@${jid.split('@')[0]}`;
           if (action === 'add') {
-            const tpl = s.welcomeMessage || `{user}\n\n🌸 *WELCOME TO {group}* 🌸\n👥 Members: {count}\n— ${s.botName || config.BOT_NAME}`;
+            const tpl = s.welcomeMessage || WELCOME_TEMPLATE;
             const text = tpl.replace('{user}', tag).replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
             let pp = null; try { pp = await sock.profilePictureUrl(jid, 'image'); } catch (e) {}
             await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid] } : { text, mentions: [jid] });
           } else if (action === 'remove') {
-            const tpl = s.goodbyeMessage || `{user}\n🥀 GOOD BYE 🖤\n— ${s.botName || config.BOT_NAME}`;
+            const tpl = s.goodbyeMessage || GOODBYE_TEMPLATE;
             await sock.sendMessage(id, { text: tpl.replace('{user}', tag).replace('{group}', metadata.subject), mentions: [jid] });
           } else {
             await sock.sendMessage(id, { text: `${tag} was ${action === 'promote' ? 'promoted' : 'demoted'}.`, mentions: [jid] });
