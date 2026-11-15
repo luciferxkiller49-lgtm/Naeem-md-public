@@ -141,7 +141,9 @@ async function downloadMediaSmart(videoId, titleHint, format) {
     return { buffer: r.buffer, url: null, title: r.title, durationSec: r.durationSec };
   }
   try {
-    const link = await fastsaver.fetchMediaLink(ytUrl, format);
+    // FastSaver video ke liye quality format chahta hai (audio, 144p ... 2160p). Default 480p, FASTSAVER_VIDEO_QUALITY se badal sakte hain.
+    const apiFormat = format === 'video' ? (process.env.FASTSAVER_VIDEO_QUALITY || '480p') : 'audio';
+    const link = await fastsaver.fetchMediaLink(ytUrl, apiFormat);
     let buffer = null;
     try { buffer = await fastsaver.downloadMediaBuffer(link, maxBytes); }
     catch (e) { console.warn(`[${format.toUpperCase()}] file download fail, link se bhejenge:`, e.message); }

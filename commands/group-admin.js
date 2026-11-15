@@ -1,148 +1,95 @@
-// Group admin commands: promote, demote, open, close, mute, unmute
-// Works with LID (new WhatsApp IDs) aur phone-number dono IDs ke saath.
-const { tinyBold } = require('../lib/font');
+// .kickall  — group admin / bot owner: group ke sab members (admins, bot aur owner ke alawa) ek saath remove.
+//             Ghalati se na ho, isliye confirm zaroori: ".kickall yes"
+// .acceptall — group admin: group ki sab pending join requests ek saath accept.
+// Dono ke liye bot ko group admin hona zaroori hai.
+const config = require('../config');
 
-// Har reply "tiny bold" style mein (links, @mentions, IDs apni shakal mein)
-const say = (sock, jid, text, extra = {}) => sock.sendMessage(jid, { text: tinyBold(text), ...extra });
+const userOf = (j) => String(j || '').split('@')[0].split(':')[0];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const BATCH = 20;
+const GAP_MS = Math.max(500, parseInt(process.env.GROUP_BATCH_GAP_MS || '2000', 10));
+const running = new Set();
 
-const userPart = (jid) => String(jid || '').split('@')[0].split(':')[0];
+function chunks(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
-// Participant ki saari pehchaan (LID, phone number, id) — user part ke taur par
-function idsOf(p) {
-  return [p.id, p.lid, p.phoneNumber, p.jid].filter(Boolean).map(userPart);
-}
-function findParticipant(participants, jid) {
-  const u = userPart(jid);
-  if (!u) return null;
-  return participants.find((p) => idsOf(p).includes(u)) || null;
-}
-const isAdminP = (p) => !!p && (p.admin === 'admin' || p.admin === 'superadmin');
-const tag = (p) => `@${userPart(p.id)}`;
-
-function senderCandidates(msg) {
-  return [msg.key.participant, msg.key.participantAlt, msg.key.participantPn].filter(Boolean);
-}
-function botCandidates(sock) {
-  return [sock.user?.id, sock.user?.lid, sock.user?.phoneNumber].filter(Boolean);
-}
-
-// Group, permissions aur fresh metadata ek jagah check
-async function guard(ctx) {
-  const { sock, from, msg, isInstanceOwner } = ctx;
-  if (!from.endsWith('@g.us')) {
-    await say(sock, from, '❌ This command only works in groups.');
-    return null;
-  }
-  let meta;
-  try {
-    meta = await sock.groupMetadata(from);
-  } catch (e) {
-    await say(sock, from, '❌ Could not fetch group info, please try again.');
-    return null;
-  }
-  const participants = meta.participants || [];
-
-  const senderIsAdmin = senderCandidates(msg).some((j) => isAdminP(findParticipant(participants, j)));
-  if (!isInstanceOwner && !senderIsAdmin) {
-    await say(sock, from, '❌ Only group admins can use this command.');
-    return null;
-  }
-
-  const botIsAdmin = botCandidates(sock).some((j) => isAdminP(findParticipant(participants, j)));
-  if (!botIsAdmin) {
-    await say(sock, from, '❌ Please make the bot an admin first.');
-    return null;
-  }
-  return { meta, participants };
-}
-
-// Kis par action karna hai: mention, reply, ya number
-function targetJids(ctx) {
-  const { msg, args } = ctx;
-  const m = msg.message || {};
-  const inner = m.extendedTextMessage || m.imageMessage || m.videoMessage || m.documentMessage || {};
-  const ci = inner.contextInfo || {};
-  const out = [];
-  for (const j of ci.mentionedJid || []) out.push(j);
-  if (!out.length && ci.participant) out.push(ci.participant);
-  if (!out.length) {
-    for (const a of args || []) {
-      const d = String(a).replace(/[^0-9]/g, '');
-      if (d.length >= 7) out.push(`${d}@s.whatsapp.net`);
-    }
-  }
-  return out;
-}
-
-function explain(err) {
-  const m = String(err?.message || err);
-  if (/not-authorized|forbidden|403/i.test(m)) return 'The bot needs to be an admin to do this.';
-  if (/rate-overlimit|429/i.test(m)) return 'WhatsApp rate limit reached, please try again later.';
-  return m;
-}
-
-async function changeRole(ctx, action) {
-  const { sock, from, prefix } = ctx;
-  const isPromote = action === 'promote';
-  const g = await guard(ctx);
-  if (!g) return;
-
-  const jids = targetJids(ctx);
-  if (!jids.length) {
-    return say(sock, from, `Reply to a user's message or mention them.\nExample: ${prefix}${action} @user`);
-  }
-
-  const doing = [];
-  const notes = [];
-  for (const j of jids) {
-    const p = findParticipant(g.participants, j);
-    if (!p) { notes.push(`• ${j.split('@')[0]} is not in this group`); continue; }
-    if (isPromote && isAdminP(p)) { notes.push(`• ${tag(p)} is already an admin`); continue; }
-    if (!isPromote && !isAdminP(p)) { notes.push(`• ${tag(p)} is not an admin`); continue; }
-    if (!isPromote && p.admin === 'superadmin') { notes.push(`• ${tag(p)} is the group creator and cannot be demoted`); continue; }
-    if (!doing.some((d) => d.id === p.id)) doing.push(p);
-  }
-
-  const mentions = [...doing, ...g.participants.filter((p) => notes.some((n) => n.includes(tag(p))))].map((p) => p.id);
-  let text = '';
-  if (doing.length) {
-    try {
-      await sock.groupParticipantsUpdate(from, doing.map((p) => p.id), action);
-      const who = doing.map(tag).join(', ');
-      const many = doing.length > 1;
-      text += isPromote
-        ? `👑 ${who} ${many ? 'are now admins' : 'is now an admin'}.`
-        : `⬇️ ${who} ${many ? 'are' : 'is'} no longer ${many ? 'admins' : 'an admin'}.`;
-    } catch (err) {
-      text += `❌ Could not ${action} the user: ${explain(err)}`;
-    }
-  }
-  if (notes.length) text += `${text ? '\n\n' : ''}${notes.join('\n')}`;
-  await say(sock, from, text, { mentions });
-}
-
-async function setAnnounce(ctx, announce) {
-  const { sock, from } = ctx;
-  const g = await guard(ctx);
-  if (!g) return;
-  if (!!g.meta.announce === announce) {
-    return say(sock, from, announce ? '🔒 Group is already closed, only admins can send messages.' : '🔓 Group is already open, everyone can send messages.');
-  }
-  try {
-    await sock.groupSettingUpdate(from, announce ? 'announcement' : 'not_announcement');
-    await say(sock, from, announce
-      ? '🔒 Group is now closed, only admins can send messages.'
-      : '🔓 Group is now open, everyone can send messages.');
-  } catch (err) {
-    await say(sock, from, `❌ Could not change group settings: ${explain(err)}`);
-  }
+async function checkAdminPrereq(ctx) {
+  if (!ctx.isGroup) return 'ℹ️ Ye command group mein likhein.';
+  if (!(ctx.isAdmin || ctx.isOwner || ctx.isInstanceOwner)) return '❌ Sirf group admin ye command chala sakta hai.';
+  if (!ctx.isBotAdmin) return '❌ Pehle bot ko group admin banayein.';
+  return null;
 }
 
 module.exports = [
-  { name: 'promote', description: 'Reply ya @mention kiye gaye member ko admin banata hai', category: 'group', execute: (c) => changeRole(c, 'promote') },
-  { name: 'demote', description: 'Reply ya @mention kiye gaye admin ko admin se hata deta hai', category: 'group', execute: (c) => changeRole(c, 'demote') },
-  { name: 'open', description: 'Group khol deta hai — sab members message bhej saken', category: 'group', execute: (c) => setAnnounce(c, false) },
-  { name: 'close', description: 'Group band karta hai — sirf admins message bhej saken', category: 'group', execute: (c) => setAnnounce(c, true) },
-  { name: 'unmute', description: 'Group khol deta hai (.open jaisa)', category: 'group', execute: (c) => setAnnounce(c, false) },
-  { name: 'mute', description: 'Group band karta hai (.close jaisa)', category: 'group', execute: (c) => setAnnounce(c, true) },
+  {
+    name: 'kickall',
+    aliases: [],
+    description: 'Group ke sab members ek saath remove (admins ko chhod kar). Confirm: .kickall yes',
+    category: 'group',
+    async execute(ctx) {
+      const err = await checkAdminPrereq(ctx);
+      if (err) return ctx.reply(err);
+      const word = String((ctx.args || [])[0] || '').toLowerCase();
+      if (!['yes', 'confirm', 'haan'].includes(word)) {
+        return ctx.reply(`⚠️ Ye group ke sab members (admins ke alawa) nikal dega.\nConfirm karne ke liye likhein: *${ctx.prefix}kickall yes*`);
+      }
+      if (running.has(ctx.from)) return ctx.reply('⏳ Kickall pehle se chal raha hai.');
+
+      let meta;
+      try { meta = await ctx.sock.groupMetadata(ctx.from); }
+      catch (e) { return ctx.reply(`❌ Group ki maloomat nahi mili: ${e.message}`); }
+
+      const protectedNums = new Set([
+        ...[ctx.sock.user?.id, ctx.sock.user?.lid].filter(Boolean).map(userOf),
+        userOf(config.OWNER_NUMBER),
+      ]);
+      const targets = (meta.participants || []).filter((p) => {
+        if (p.admin) return false;
+        const nums = [p.id, p.lid, p.phoneNumber, p.jid].filter(Boolean).map(userOf);
+        return !nums.some((n) => protectedNums.has(n));
+      }).map((p) => p.id);
+
+      if (!targets.length) return ctx.reply('ℹ️ Koi member remove karne ke liye nahi mila (sab admin hain).');
+
+      running.add(ctx.from);
+      try {
+        await ctx.reply(`🧹 ${targets.length} members nikale ja rahe hain...`);
+        let removed = 0; let failed = 0;
+        for (const batch of chunks(targets, BATCH)) {
+          try {
+            const res = await ctx.sock.groupParticipantsUpdate(ctx.from, batch, 'remove');
+            for (const r of res || []) (String(r?.status ?? '200').startsWith('2') ? removed++ : failed++);
+          } catch (e) { failed += batch.length; }
+          await sleep(GAP_MS);
+        }
+        return ctx.reply(`✅ ${removed} members nikal diye.${failed ? `\n⚠️ ${failed} nahi nikal sake (shayad admin ya bot ki power kam hai).` : ''}`);
+      } finally {
+        running.delete(ctx.from);
+      }
+    },
+  },
+  {
+    name: 'acceptall',
+    aliases: [],
+    description: 'Group ki sab pending join requests ek saath accept',
+    category: 'group',
+    async execute(ctx) {
+      const err = await checkAdminPrereq(ctx);
+      if (err) return ctx.reply(err);
+      let list;
+      try { list = await ctx.sock.groupRequestParticipantsList(ctx.from); }
+      catch (e) { return ctx.reply(`❌ Join requests nahi mil sakin: ${e.message}`); }
+      const jids = (list || []).map((x) => x.jid || x.lid || x.id).filter(Boolean);
+      if (!jids.length) return ctx.reply('ℹ️ Is group mein koi pending join request nahi hai.');
+
+      let ok = 0; let fail = 0;
+      for (const batch of chunks(jids, BATCH)) {
+        try {
+          const res = await ctx.sock.groupRequestParticipantsUpdate(ctx.from, batch, 'approve');
+          for (const r of res || []) (String(r?.status ?? '200').startsWith('2') ? ok++ : fail++);
+        } catch (e) { fail += batch.length; }
+        await sleep(GAP_MS);
+      }
+      return ctx.reply(`✅ ${ok} join requests accept ho gayi.${fail ? `\n⚠️ ${fail} accept nahi ho sakin.` : ''}`);
+    },
+  },
 ];
