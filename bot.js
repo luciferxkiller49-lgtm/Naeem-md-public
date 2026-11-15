@@ -17,6 +17,11 @@ const viewOnceCache = require('./lib/viewOnceCache');
 const apiPool = require('./lib/apiPool');
 const { WELCOME_TEMPLATE, GOODBYE_TEMPLATE } = require('./lib/groupTemplates');
 let apiPoolNotifierSet = false;
+
+// Pairing code ka apna naam: WhatsApp par link karte waqt yahi 8-character code type hota hai (random code ki jagah)
+// PAIRING_CODE Config Var se badal sakte hain. Sirf A-Z aur 0-9, theek 8 characters.
+const PAIRING_CODE = String(process.env.PAIRING_CODE || 'NAEEMXMD').toUpperCase();
+const PAIRING_CODE_OK = /^[A-Z0-9]{8}$/.test(PAIRING_CODE);
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
@@ -238,7 +243,11 @@ class BotManager {
       pairingPromise = new Promise(async (resolve, reject) => {
         try {
           await safety.sleep(2000);
-          const code = await sock.requestPairingCode(cleanNumber);
+          const code = await sock.requestPairingCode(cleanNumber, PAIRING_CODE_OK ? PAIRING_CODE : undefined)
+            .catch(async (e) => {
+              console.warn('[PAIR] custom pairing code nahi lag saka, random code de rahe hain:', e.message);
+              return sock.requestPairingCode(cleanNumber);
+            });
           instanceData.pairingCode = code;
           resolve(code);
         } catch (err) {
