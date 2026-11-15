@@ -16,7 +16,6 @@ const sessionFix = require('./lib/sessionFix');
 const viewOnceCache = require('./lib/viewOnceCache');
 const apiPool = require('./lib/apiPool');
 const { WELCOME_TEMPLATE, GOODBYE_TEMPLATE } = require('./lib/groupTemplates');
-const { channelContext } = require('./lib/channel');
 let apiPoolNotifierSet = false;
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
@@ -611,10 +610,7 @@ class BotManager {
             const tpl = s.welcomeMessage || WELCOME_TEMPLATE;
             const text = tpl.replace('{user}', tag).replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
             let pp = null; try { pp = await sock.profilePictureUrl(jid, 'image'); } catch (e) {}
-            // Welcome ke saath bhi channel ka "forwarded" tag (menu/ping jaisa)
-            const chCtx = await channelContext(sock).catch(() => undefined);
-            const ci = chCtx ? { ...chCtx, mentionedJid: [jid] } : { mentionedJid: [jid] };
-            await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid], contextInfo: ci } : { text, mentions: [jid], contextInfo: ci });
+            await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid] } : { text, mentions: [jid] });
           } else if (action === 'remove') {
             const tpl = s.goodbyeMessage || GOODBYE_TEMPLATE;
             await sock.sendMessage(id, { text: tpl.replace('{user}', tag).replace('{group}', metadata.subject), mentions: [jid] });

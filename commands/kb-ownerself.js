@@ -1,13 +1,15 @@
+const { tinyBold } = require('../lib/font');
 const viewOnceCache = require('../lib/viewOnceCache');
 const { getUptimeText } = require('../lib/uptime');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
-const VV_NOT_FOUND =
-  'ℹ️ Is view-once ka media mujhe nahi mil raha.\n\n' +
+const VV_NOT_FOUND = tinyBold(
+  'Is view-once ka media mujhe nahi mil raha.\n\n' +
   'Wajah in mein se koi ek hoti hai:\n' +
-  '• wo pehle hi khul chuka ya expire ho chuka hai (WhatsApp tab media quote se hata deta hai)\n' +
-  '• wo aap ka apna bheja hua view-once hai (iska media bhi quote mein nahi aata)\n' +
-  '• aap ne view-once image/video ki jagah kisi aur message par reply kiya';
+  '• wo pehle hi khul chuka ya expire ho chuka hai\n' +
+  '• wo aap ka apna bheja hua view-once hai\n' +
+  '• aap ne view-once image/video ki jagah kisi aur message par reply kiya'
+);
 
 function idFromNumber(n) {
   return (n || '').replace(/[^0-9]/g, '');
@@ -39,7 +41,7 @@ async function extractViewOnce(sock, msg) {
   const q = quotedOf(msg);
   if (!q) return null;
   // Pehle cache (jo message aane par save hua, mediaKey samet), phir quote
-  const hit = viewOnceCache.get(q.ctxInfo.stanzaId);
+  const hit = await viewOnceCache.get(q.ctxInfo.stanzaId);
   const target = hit ? hit.message : unwrapMedia(q.quoted);
   const imageMsg = target?.imageMessage;
   const videoMsg = target?.videoMessage;

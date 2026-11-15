@@ -1,8 +1,8 @@
-const viewOnceCache = require('../lib/viewOnceCache');
 // .nice — reply kiye hue view-once (image / video / voice / document) ko NORMAL media bana kar
-// BOT OWNER KI APNI SELF CHAT (Message yourself) mein bhejta hai. Jis chat mein command likha gaya,
-// wahan kuch nahi jata. Sirf owner / sudo chala sakta hai; dusron ke liye bot chup rehta hai.
+// BOT OWNER KI APNI SELF CHAT mein bhejta hai. Sirf owner / sudo chala sakta hai; dusron ke liye chup.
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const viewOnceCache = require('../lib/viewOnceCache');
+const { tinyBold } = require('../lib/font');
 
 function quotedOf(msg) {
   const m = msg?.message || {};
@@ -33,6 +33,7 @@ function mediaOf(target) {
 }
 
 const userOf = (jid) => String(jid || '').split('@')[0].split(':')[0];
+const say = (ctx, text) => ctx.reply(tinyBold(text));
 
 module.exports = [
   {
@@ -43,12 +44,12 @@ module.exports = [
     async execute(ctx) {
       if (!ctx.isInstanceOwner) return; // dusron ke liye chup
       const q = quotedOf(ctx.msg);
-      if (!q) return ctx.reply('ℹ️ Kisi view-once image, video, voice ya document par reply karke ye likhein.');
+      if (!q) return say(ctx, 'Kisi view-once image, video, voice ya document par reply karke ye likhein.');
 
-      const hit = viewOnceCache.get(q.ctxInfo.stanzaId); // pehle cache, phir quote
+      const hit = await viewOnceCache.get(q.ctxInfo.stanzaId); // pehle cache (RAM ya Mongo), phir quote
       const target = hit ? hit.message : unwrap(q.quoted);
       const media = mediaOf(target);
-      if (!media) return ctx.reply('ℹ️ Ye view-once media nahi hai.');
+      if (!media) return say(ctx, 'Ye view-once media nahi hai.');
 
       let buffer;
       try {
@@ -58,7 +59,7 @@ module.exports = [
         );
       } catch (e) {
         console.error('[NICE] download failed:', e.message);
-        return ctx.reply('❌ Ye view-once ab download nahi ho saka (WhatsApp ne media wapas le liya ya expire ho gaya). Doosri baar try karein.');
+        return say(ctx, 'Ye view-once ab download nahi ho saka (WhatsApp ne media wapas le liya ya expire ho gaya). Doosri baar try karein.');
       }
 
       // Owner ki apni chat (Message yourself) — yahin sab jata hai
