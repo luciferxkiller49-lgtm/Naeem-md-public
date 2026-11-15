@@ -172,33 +172,4 @@ module.exports = [
       await sock.groupLeave(from);
     },
   },
-  {
-    name: 'pair',
-    description: 'Chat se hi naya WhatsApp number pair karta hai (web panel ke bina)',
-    execute: async ({ sock, from, args, isInstanceOwner, addInstance }) => {
-      if (!isInstanceOwner) return sock.sendMessage(from, { text: 'Only this bot\'s owner can use this command.' });
-
-      const number = idFromNumber(args[0]);
-      if (!number || number.length < 10) {
-        return sock.sendMessage(from, { text: 'Format: .pair 923001234567 (full number with country code, no leading 0)' });
-      }
-      if (number.startsWith('0')) {
-        return sock.sendMessage(from, {
-          text: 'Please include the country code without a leading 0 — e.g. 923001234567 for Pakistan, not 03001234567.',
-        });
-      }
-
-      await sock.sendMessage(from, { text: `⏳ Generating pairing code for ${number}...` });
-      try {
-        const { code } = await addInstance(number);
-        if (!code) throw new Error('No code returned');
-        await sock.sendMessage(from, {
-          text: `✅ Pairing code for ${number}: *${code}*\n\nOn that phone: WhatsApp > Linked Devices > Link with phone number, then enter this code.`,
-        });
-      } catch (err) {
-        console.error('.pair error:', err.message);
-        await sock.sendMessage(from, { text: `❌ Could not generate a pairing code: ${err.message}` });
-      }
-    },
-  },
 ];

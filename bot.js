@@ -514,7 +514,7 @@ class BotManager {
         const senderDigits = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
         const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
-        if (instanceSettings.mode === 'private' && !isOwner) {
+        if (instanceSettings.mode === 'private' && !isOwner && trigger !== 'pair') {
           return;
         }
 
@@ -574,9 +574,19 @@ class BotManager {
           }
         };
 
-        await cmd.execute(ctx);
-        if (process.env.REACT_ON_COMMAND === '1') {
-          try { await sock.sendMessage(from, { react: { text: '✅', key: msg.key } }); } catch (e) {}
+        // Reaction-based feedback: ⏳ (chal raha) -> ✅ (ho gaya) / ❌ (fail, saath 1-2 line ki wajah)
+        const react = (emoji) => sock.sendMessage(from, { react: { text: emoji, key: msg.key } }).catch(() => {});
+        let failed = false;
+        const origReply = ctx.reply;
+        ctx.reply = (...a) => { if (typeof a[0] === 'string' && a[0].startsWith('❌')) failed = true; return origReply(...a); };
+        react('⏳');
+        try {
+          await cmd.execute(ctx);
+          react(failed ? '❌' : '✅');
+        } catch (e) {
+          react('❌');
+          const short = String(e?.message || e).split('\n')[0].slice(0, 160);
+          await sock.sendMessage(from, { text: `❌ ${short}` }, { quoted: msg }).catch(() => {});
         }
 
       } catch (err) {

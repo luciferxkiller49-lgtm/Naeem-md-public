@@ -76,7 +76,6 @@ function bulkDelete({ name, aliases, description, take, noun, otherNoun, otherCm
           }
           const keys = take(chatId);
           if (!keys.length) continue;
-          if (!self) await ctx.reply(`🧹 ${keys.length} ${noun} delete kiye ja rahe hain...`);
           total += keys.length;
           done += await deleteKeys(ctx, chatId, keys);
           groups++;

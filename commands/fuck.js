@@ -101,7 +101,6 @@ async function statusMode(ctx, text) {
     payload = { text: message };
   }
 
-  await ctx.reply(`⏳ ${subject} mein ${total} status lagaye ja rahe hain...`);
 
   let ok = 0; let streak = 0; let lastErr = ''; let joinErr = ''; let joined = false; let joinTried = false;
   const attempt = async () => {

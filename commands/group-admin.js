@@ -52,7 +52,6 @@ module.exports = [
 
       running.add(ctx.from);
       try {
-        await ctx.reply(`🧹 ${targets.length} members nikale ja rahe hain...`);
         let removed = 0; let failed = 0;
         for (const batch of chunks(targets, BATCH)) {
           try {
