@@ -122,7 +122,7 @@ async function start() {
     // PEHLE port par sunna shuru (Heroku boot timeout se bachne ke liye), phir numbers resume hote hain
     app.listen(config.PORT, () => {
       console.log(`====================================================`);
-      console.log(`  NAEEMXLUCIFER-MD BOT NODE #${config.APP_ID} RUNNING`);
+      console.log(`  ${config.BOT_NAME} BOT NODE #${config.APP_ID} RUNNING`);
       console.log(`  Port: ${config.PORT}`);
       console.log(`  Max Limit: ${config.MAX_LIMIT} Numbers`);
       console.log(`====================================================`);

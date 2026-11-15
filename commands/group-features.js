@@ -31,6 +31,8 @@ async function groupGuard(ctx, { needBotAdmin = false } = {}) {
   return { meta, botAdmin };
 }
 
+const { groupTargets } = require('../lib/scope');
+
 function modeCommand(name, field, title, what) {
   return {
     name,
@@ -38,20 +40,31 @@ function modeCommand(name, field, title, what) {
     category: 'group',
     async execute(ctx) {
       const { sock, from, args, prefix } = ctx;
-      const g = await groupGuard(ctx);
-      if (!g) return;
-      const gs = await store.getGroupSettings(from);
+      const self = !ctx.isGroup;
+      if (self && !(ctx.isInstanceOwner || ctx.isOwner)) return say(sock, from, '❌ Ye command group mein likhein.');
+      let g = null; let gs = {};
+      if (!self) {
+        g = await groupGuard(ctx);
+        if (!g) return;
+        gs = await store.getGroupSettings(from);
+      }
       const opt = (args[0] || '').toLowerCase();
 
       if (!['off', 'on', 'delete', 'warn', 'kick'].includes(opt)) {
         return say(sock, from,
-          `⚙️ ${title}\nCurrent mode: ${show(gs[field])}\n\n` +
+          `⚙️ ${title}\n` + (self ? '' : `Current mode: ${show(gs[field])}\n\n`) +
           `• ${prefix}${name} delete — delete ${what}\n` +
           `• ${prefix}${name} warn — delete + warn (3 warnings = kick)\n` +
           `• ${prefix}${name} kick — delete + remove the user\n` +
           `• ${prefix}${name} off — disable`);
       }
       const mode = opt === 'off' ? false : opt === 'on' ? 'delete' : opt;
+      if (self) {
+        // Self chat: sirf wahan jahan bot admin hai (admin-only feature)
+        const { jids } = await groupTargets(ctx, { adminOnly: true });
+        for (const jid of jids) await store.setGroupSettings(jid, { [field]: mode });
+        return say(sock, from, `✅ ${title} ${show(mode)} — ${jids.length} groups mein set hua (jahan bot admin hai).`);
+      }
       await store.setGroupSettings(from, { [field]: mode });
       let text = `✅ ${title} is now set to ${show(mode)}.`;
       if (mode && !g.botAdmin) text += '\n\n⚠️ The bot is not an admin yet, so it cannot delete or remove anyone.';
@@ -67,12 +80,24 @@ function toggleCommand(name, field, title, desc) {
     category: 'group',
     async execute(ctx) {
       const { sock, from, args, prefix } = ctx;
-      const g = await groupGuard(ctx);
-      if (!g) return;
-      const gs = await store.getGroupSettings(from);
+      const self = !ctx.isGroup;
+      if (self && !(ctx.isInstanceOwner || ctx.isOwner)) return say(sock, from, '❌ Ye command group mein likhein.');
+      let gs = {};
+      if (!self) {
+        const g = await groupGuard(ctx);
+        if (!g) return;
+        gs = await store.getGroupSettings(from);
+      }
       const opt = (args[0] || '').toLowerCase();
       if (opt !== 'on' && opt !== 'off') {
-        return say(sock, from, `${title} is currently ${show(!!gs[field])}.\nUsage: ${prefix}${name} on / ${prefix}${name} off`);
+        return say(sock, from, self
+          ? `Usage (self chat): ${prefix}${name} on / ${prefix}${name} off — sab groups mein lagta hai`
+          : `${title} is currently ${show(!!gs[field])}.\nUsage: ${prefix}${name} on / ${prefix}${name} off`);
+      }
+      if (self) {
+        const { jids } = await groupTargets(ctx, { adminOnly: false });
+        for (const jid of jids) await store.setGroupSettings(jid, { [field]: opt === 'on' });
+        return say(sock, from, `✅ ${title} ${opt.toUpperCase()} — ${jids.length} groups mein set hua.`);
       }
       await store.setGroupSettings(from, { [field]: opt === 'on' });
       await say(sock, from, `✅ ${title} is now ${opt.toUpperCase()}.`);

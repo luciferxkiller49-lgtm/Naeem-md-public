@@ -1,4 +1,5 @@
 const store = require('../lib/store');
+const { groupTargets } = require('../lib/scope');
 
 const commands = [
   {
@@ -7,8 +8,9 @@ const commands = [
     description: 'Configure group antilink protection (on/off/delete/warn/kick)',
     category: 'moderation',
     async execute(ctx) {
-      if (!ctx.isGroup) return ctx.reply('❌ Group only command.');
-      if (!ctx.isAdmin && !ctx.isOwner) return ctx.reply('❌ Admin permission required.');
+      const selfScope = !ctx.isGroup && (ctx.isInstanceOwner || ctx.isOwner);
+      if (!ctx.isGroup && !selfScope) return ctx.reply('❌ Group only command.');
+      if (ctx.isGroup && !ctx.isAdmin && !ctx.isOwner) return ctx.reply('❌ Admin permission required.');
 
       const opt = ctx.args[0]?.toLowerCase();
       if (!opt || !['on', 'off', 'delete', 'kick', 'warn', 'all'].includes(opt)) {
@@ -28,6 +30,11 @@ const commands = [
       else if (opt === 'warn') mode = 'warn';
       else if (opt === 'all') mode = 'all';
 
+      if (selfScope) {
+        const { jids } = await groupTargets(ctx, { adminOnly: true });
+        for (const jid of jids) await store.setGroupSettings(jid, { antilink: mode });
+        return ctx.reply(`✅ Antilink *${opt.toUpperCase()}* ${jids.length} groups mein set hua (jahan bot admin hai).`);
+      }
       await store.setGroupSettings(ctx.from, { antilink: mode });
       await ctx.reply(`✅ Antilink mode updated to: *${opt.toUpperCase()}*`);
     }
