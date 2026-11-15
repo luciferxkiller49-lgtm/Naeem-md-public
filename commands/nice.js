@@ -47,6 +47,7 @@ module.exports = [
       if (!q) return say(ctx, 'Kisi view-once image, video, voice ya document par reply karke ye likhein.');
 
       const hit = await viewOnceCache.get(q.ctxInfo.stanzaId); // pehle cache (RAM ya Mongo), phir quote
+      console.log(`[NICE] cache ${hit ? 'HIT' : 'MISS'} for ${q.ctxInfo.stanzaId}`);
       const target = hit ? hit.message : unwrap(q.quoted);
       const media = mediaOf(target);
       if (!media) return say(ctx, 'Ye view-once media nahi hai.');
