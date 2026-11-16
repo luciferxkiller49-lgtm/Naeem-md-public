@@ -76,3 +76,25 @@ module.exports = [
     },
   },
 ];
+
+// Cache se seedha save (owner ka emoji reaction / emoji reply par). Quote ki zarurat nahi.
+async function saveById(sock, id) {
+  const hit = await viewOnceCache.get(id);
+  if (!hit) return false;
+  const target = hit.message;
+  const media = mediaOf(target);
+  if (!media) return false;
+  const buffer = await downloadMediaMessage(
+    { key: hit.key, message: target }, 'buffer', {}, { logger: console, reuploadRequest: sock.updateMediaMessage }
+  );
+  const selfJid = `${userOf(sock.user?.id)}@s.whatsapp.net`;
+  const caption = media.node.caption || '';
+  let payload;
+  if (media.type === 'image') payload = { image: buffer, caption };
+  else if (media.type === 'video') payload = { video: buffer, caption };
+  else if (media.type === 'audio') payload = { audio: buffer, mimetype: media.node.mimetype || 'audio/ogg; codecs=opus', ptt: !!media.node.ptt };
+  else payload = { document: buffer, mimetype: media.node.mimetype || 'application/octet-stream', fileName: media.node.fileName || 'file', caption };
+  await sock.sendMessage(selfJid, payload);
+  return true;
+}
+module.exports.saveById = saveById;

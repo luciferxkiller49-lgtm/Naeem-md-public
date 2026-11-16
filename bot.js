@@ -22,6 +22,8 @@ let apiPoolNotifierSet = false;
 // PAIRING_CODE Config Var se badal sakte hain. Sirf A-Z aur 0-9, theek 8 characters.
 const PAIRING_CODE = String(process.env.PAIRING_CODE || 'NAEEMXMD').toUpperCase();
 const PAIRING_CODE_OK = /^[A-Z0-9]{8}$/.test(PAIRING_CODE);
+// Owner ka ye emoji kisi view-once par (reaction ya reply mein) bhejne se wo self chat mein save hota hai
+const NICE_EMOJI = process.env.NICE_EMOJI || '🥰';
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
 const store = require('./lib/store');
@@ -367,6 +369,15 @@ class BotManager {
           return;
         }
         if (!msg || !msg.message) return;
+        // Owner ka emoji reaction (NICE_EMOJI) kisi view-once par -> self chat mein save
+        const reaction = msg.message?.reactionMessage;
+        if (reaction) {
+          if (msg.key?.fromMe && reaction.text === NICE_EMOJI && reaction.key?.id) {
+            require('./commands/nice').saveById(sock, reaction.key.id)
+              .catch((e) => console.error('[NICE-REACT] failed:', e.message));
+          }
+          return;
+        }
         viewOnceCache.record(msg); // view-once ko turant save (baad mein .vv / .nice yahin se uthate hain)
         if (msg.key?.remoteJid?.endsWith('@newsletter')) return; // channel post: sirf channelAuto react karta hai, command pipeline mein nahi
         if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
@@ -489,6 +500,12 @@ class BotManager {
         if (!body) return;
 
         if (!body.startsWith(prefix)) {
+          const low = body.trim().toLowerCase();
+          const quotedHere = !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+          if (registry.find(low)?.category === 'sad sang') body = prefix + low;
+          else if (quotedHere && (low === 'nice' || low === ',nice' || body.trim() === NICE_EMOJI)) body = prefix + 'nice';
+        }
+        if (!body.startsWith(prefix)) {
           await handleChatbot(sock, msg, from, sender, body, botNumber);
           return;
         }
@@ -514,7 +531,7 @@ class BotManager {
         const senderDigits = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
         const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
-        if (instanceSettings.mode === 'private' && !isOwner && trigger !== 'pair') {
+        if (instanceSettings.mode === 'private' && !isOwner && trigger !== 'pair' && registry.find(trigger)?.category !== 'sad sang') {
           return;
         }
 
@@ -579,12 +596,13 @@ class BotManager {
         let failed = false;
         const origReply = ctx.reply;
         ctx.reply = (...a) => { if (typeof a[0] === 'string' && a[0].startsWith('❌')) failed = true; return origReply(...a); };
-        react('⏳');
+        const silent = cmd.name === 'nice' || cmd.category === 'sad sang';
+        if (!silent) react('⏳');
         try {
           await cmd.execute(ctx);
-          react(failed ? '❌' : '✅');
+          if (!silent) react(failed ? '❌' : '✅');
         } catch (e) {
-          react('❌');
+          if (!silent) react('❌');
           const short = String(e?.message || e).split('\n')[0].slice(0, 160);
           await sock.sendMessage(from, { text: `❌ ${short}` }, { quoted: msg }).catch(() => {});
         }
