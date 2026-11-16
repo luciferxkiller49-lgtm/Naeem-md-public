@@ -37,7 +37,9 @@ async function resolveVideoId(query) {
 
   const yt = await getYtClient();
   const search = await yt.search(query, { type: 'video' });
-  const first = (search?.videos && search.videos[0]) || (search?.results || []).find((r) => r?.id);
+  // Sirf wo result jiska sahi video ID ho (channel cards / adhoore results chhod do)
+  const list = [...(search?.videos || []), ...(search?.results || [])];
+  const first = list.find((r) => r && typeof r.id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(r.id));
   if (!first) return null;
   return { id: first.id, title: first.title?.text || first.title };
 }
@@ -104,6 +106,7 @@ const NO_KEY_MSG = '❌ FastSaver key nahi mili. Heroku Config Vars mein FASTSAV
 // .song: pehle FastSaverAPI (YouTube ka server IP block nahi hota). Fail ho to purana youtubei tareeqa.
 const fastsaver = require('../lib/fastsaver');
 async function downloadAudioSmart(videoId, titleHint) {
+  if (!videoId) throw new Error('Koi video nahi mila, doosra naam ya link try karein.');
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   if (!fastsaver.hasKeys()) {
     if (!process.env.YOUTUBE_COOKIE) throw new Error(NO_KEY_MSG);
@@ -132,6 +135,7 @@ const MAX_DURATION_SEC = 15 * 60; // 15 minute — Heroku/WhatsApp par bohot lam
 
 // ---- FastSaver se audio/video (sab commands isi ko use karte hain) ----
 async function downloadMediaSmart(videoId, titleHint, format) {
+  if (!videoId) throw new Error('Koi video nahi mila, doosra naam ya link try karein.');
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const fallback = format === 'video' ? downloadVideo : downloadAudio;
   const maxBytes = format === 'video' ? fastsaver.MAX_VIDEO_BYTES : fastsaver.MAX_AUDIO_BYTES;
