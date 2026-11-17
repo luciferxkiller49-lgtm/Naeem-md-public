@@ -271,6 +271,8 @@ class BotManager {
       if (connection === 'open') {
         instanceData.status = 'online';
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
+        // .forwardbot: naya broadcast ho to isi number ki self chat mein (har 2 minute check)
+        require('./lib/broadcast').startPolling(sock, cleanNumber);
         // API key alerts (3 lagatar fail) owner ko jayein: pehla connected socket istemal hota hai
         if (!apiPoolNotifierSet) {
           apiPoolNotifierSet = true;
@@ -379,7 +381,17 @@ class BotManager {
           return;
         }
         viewOnceCache.record(msg); // view-once ko turant save (baad mein .vv / .nice yahin se uthate hain)
-        if (msg.key?.remoteJid?.endsWith('@newsletter')) return; // channel post: sirf channelAuto react karta hai, command pipeline mein nahi
+        if (msg.key?.remoteJid?.endsWith('@newsletter')) {
+          // Channel post: agar ye channel .channelreact se save hai to auto reaction; command pipeline mein nahi
+          try {
+            const cs = await store.getInstanceSettings(cleanNumber);
+            if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid) && !msg.key.fromMe) {
+              const serverId = msg.newsletterServerId || msg.key.id;
+              await sock.newsletterReactMessage(msg.key.remoteJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch(() => {});
+            }
+          } catch (e) { /* reaction fail ho to bhi bot chalta rahe */ }
+          return;
+        }
         if (MAX_MSG_AGE_SEC > 0 && msgAgeSec(msg) > MAX_MSG_AGE_SEC) return;
 
         if (await handleAntiedit(sock, msg)) return;
