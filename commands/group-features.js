@@ -109,7 +109,8 @@ module.exports = [
   modeCommand('antivoice', 'antivoice', 'Anti-voice', 'voice notes'),
   modeCommand('antisticker', 'antisticker', 'Anti-sticker', 'stickers'),
   modeCommand('antivideo', 'antivideo', 'Anti-video', 'videos'),
-  modeCommand('antigcstatus', 'antigcstatus', 'Anti-group-status', 'group status posts (group stories)'),
+  // Naam ab antistatus hai; field wahi (antigcstatus) rakha hai taake purani settings na jayen
+  modeCommand('antistatus', 'antigcstatus', 'Anti-status', 'status posts (stories)'),
   modeCommand('antimention', 'antimention', 'Anti-mention', 'status mentions of this group'),
   toggleCommand('welcome', 'welcomeOn', 'Welcome message', 'Welcome new members in this group (on/off)'),
   toggleCommand('goodbye', 'goodbyeOn', 'Goodbye message', 'Say goodbye when members leave this group (on/off)'),
