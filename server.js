@@ -130,6 +130,7 @@ async function start() {
 
     memlog.start(() => botManager.getActiveCount());
     await botManager.init(db);
+    require('./lib/pairRouter').startWorker(botManager); // doosre nodes ki pairing requests
     fleet.start(db, botManager); // har minute apna heartbeat Mongo mein (.botstatus ke liye)
   } catch (err) {
     console.error(`[INIT] Startup failed:`, err.message);

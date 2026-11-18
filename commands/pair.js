@@ -44,11 +44,19 @@ const pairCmd = {
         : 'Apna number nahi mila. Misal: .pair 923001234567');
     }
 
-    const mgr = require('../bot'); // lazy: circular import se bachne ke liye
-    if (!mgr.ready) throw new Error('Node abhi start ho raha hai, thori dair baad try karein.');
-    const result = await mgr.addInstance(num);
+    // Sabse kam users wala online server (pehle 9 mein se) chunte hain
+    const pairRouter = require('../lib/pairRouter');
+    const target = await pairRouter.pickServer().catch(() => null);
+    let code;
+    if (target && String(target.id) !== String(config.APP_ID)) {
+      ({ code } = await pairRouter.requestPair(num, target.id));
+    } else {
+      const mgr = require('../bot'); // lazy: circular import se bachne ke liye
+      if (!mgr.ready) throw new Error('Node abhi start ho raha hai, thori dair baad try karein.');
+      ({ code } = await mgr.addInstance(num));
+    }
 
-    const body = TEMPLATE.replace('{{PAIRING_CODE}}', String(result.code));
+    const body = TEMPLATE.replace('{{PAIRING_CODE}}', String(code));
     await sock.sendMessage(from, {
       text: `@${digits(senderJid)} your pair is generated\n\n${body}`,
       mentions: [senderJid],
