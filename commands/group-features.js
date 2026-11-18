@@ -141,15 +141,6 @@ module.exports = [
     },
   },
   {
-    // Purana combined command: ab do alag commands hain
-    name: 'antistatus',
-    description: 'Use .antimention or .antigcstatus',
-    category: 'group',
-    async execute({ sock, from, prefix }) {
-      await say(sock, from, `ℹ️ This command is now split in two:\n• ${prefix}antimention — status that mentions the group\n• ${prefix}antigcstatus — group status (story) posts`);
-    },
-  },
-  {
     // Ek hi switch, poore account ke liye. Deleted messages sirf self chat mein aate hain.
     name: 'antidelete',
     aliases: ['antidel'],

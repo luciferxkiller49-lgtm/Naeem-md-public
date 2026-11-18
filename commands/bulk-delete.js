@@ -54,7 +54,7 @@ function bulkDelete({ name, aliases, description, take, noun, otherNoun, otherCm
         if (!wantAll) {
           return ctx.reply(`ℹ️ Ye apni chat hai. Saare groups ke liye likhein: .${name} all\nKisi ek group ke liye wahi command us group mein likhein.`);
         }
-        targets = bulkCache.chatIds().filter((j) => j.endsWith('@g.us'));
+        targets = (await bulkCache.allChatIds()).filter((j) => j.endsWith('@g.us'));
       } else {
         if (!ctx.isOwner) return ctx.reply('❌ Ye command yahan sirf bot owner chala sakta hai.');
         targets = [ctx.from]; // sirf isi chat ka
@@ -74,7 +74,7 @@ function bulkDelete({ name, aliases, description, take, noun, otherNoun, otherCm
               if (!botIsAdmin(meta.participants || [], ctx.sock)) { skipped++; continue; }
             } catch (e) { skipped++; continue; }
           }
-          const keys = take(chatId);
+          const keys = await take(chatId);
           if (!keys.length) continue;
           total += keys.length;
           done += await deleteKeys(ctx, chatId, keys);
@@ -100,7 +100,7 @@ function bulkDelete({ name, aliases, description, take, noun, otherNoun, otherCm
 module.exports = [
   bulkDelete({
     name: 'dellink',
-    aliases: ['delalllink', 'delallinks', 'delalllinks', 'delallurls'],
+    aliases: ['linkdel', 'delalllink', 'delallinks', 'delalllinks', 'delallurls'],
     description: 'Link wale messages (status post ke andar ka link bhi) ek sath delete (for everyone)',
     take: bulkCache.takeLinkKeys,
     noun: 'link message(s)',
