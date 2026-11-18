@@ -331,7 +331,10 @@ class BotManager {
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         const paired = !!(sock.authState.creds.registered || sock.authState.creds.me?.id);
         const giveUp = !loggedOut && shouldGiveUp({ paired, statusCode, pairStartedAt: this.pairStart.get(cleanNumber) });
-        const shouldReconnect = !loggedOut && !giveUp;
+        // 403 = WhatsApp ne is number ko reject kiya (restriction / ban). Baar baar reconnect se aur nuksan hota hai,
+        // is liye reconnect band; session (login + settings) mehfooz rakhte hain, restart par ek baar phir try hoga.
+        const forbidden = statusCode === 403;
+        const shouldReconnect = !loggedOut && !forbidden && !giveUp;
         console.warn(`[BOT-MGR] Connection closed for +${cleanNumber} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
         if (shouldReconnect) {
@@ -346,6 +349,14 @@ class BotManager {
             });
           }, delay);
           this.reconnectTimers.set(cleanNumber, timer);
+        } else if (forbidden) {
+          instanceData.status = 'blocked';
+          this.retries.delete(cleanNumber);
+          const t3 = this.reconnectTimers.get(cleanNumber);
+          if (t3) { clearTimeout(t3); this.reconnectTimers.delete(cleanNumber); }
+          this.instances.delete(cleanNumber);
+          capacity.setCount(this.getActiveCount());
+          console.warn(`[BOT-MGR] +${cleanNumber}: WhatsApp ne 403 diya (restricted/banned). Reconnect band, session mehfooz hai. Number theek ho to .pair ya restart karein.`);
         } else {
           console.log(giveUp
             ? `[BOT-MGR] +${cleanNumber} never finished linking. Removing it (no more reconnects).`
