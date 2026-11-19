@@ -387,7 +387,12 @@ class BotManager {
           const rj = String(msg.key?.remoteJid || '');
           if (msg.key && !rj.endsWith('@g.us') && rj !== 'status@broadcast' && !msg.key.fromMe) {
             console.log(`[STUB] ${msg.key.id} from=${rj} type=${msg.messageStubType} params=${JSON.stringify(msg.messageStubParameters || []).slice(0, 120)}`);
-            try { if (typeof sock.requestPlaceholderResend === 'function') await sock.requestPlaceholderResend(msg.key); } catch (e) { console.error('[STUB] resend request failed:', e.message); }
+            if (typeof sock.requestPlaceholderResend !== 'function') {
+              console.warn('[STUB] requestPlaceholderResend is installed Baileys mein nahi hai: Baileys update karein');
+            } else {
+              try { await sock.requestPlaceholderResend(msg.key); console.log(`[STUB] resend maanga gaya: ${msg.key.id}`); }
+              catch (e) { console.error('[STUB] resend request failed:', e.message); }
+            }
           }
           return;
         }
