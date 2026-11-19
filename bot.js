@@ -387,6 +387,17 @@ class BotManager {
           const rj = String(msg.key?.remoteJid || '');
           if (msg.key && !rj.endsWith('@g.us') && rj !== 'status@broadcast' && !msg.key.fromMe) {
             console.log(`[STUB] ${msg.key.id} from=${rj} type=${msg.messageStubType} params=${JSON.stringify(msg.messageStubParameters || []).slice(0, 120)}`);
+            // "No matching sessions": bot ke device ki keys is sender ke device ke liye nahi hain.
+            // Sirf keys dobara maangte hain (assertSessions). Koi message nahi bheja jata.
+            const noSession = JSON.stringify(msg.messageStubParameters || []).includes('No matching sessions');
+            if (noSession && typeof sock.assertSessions === 'function') {
+              global.__stubRebuild = global.__stubRebuild || new Map();
+              if (Date.now() - (global.__stubRebuild.get(rj) || 0) > 10 * 60 * 1000) {
+                global.__stubRebuild.set(rj, Date.now());
+                try { await sock.assertSessions([rj], true); console.log(`[STUB] session keys refresh: ${rj}`); }
+                catch (e) { console.error('[STUB] session refresh failed:', e.message); }
+              }
+            }
             if (typeof sock.requestPlaceholderResend !== 'function') {
               console.warn('[STUB] requestPlaceholderResend is installed Baileys mein nahi hai: Baileys update karein');
             } else {
