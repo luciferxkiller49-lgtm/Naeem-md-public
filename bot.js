@@ -381,7 +381,16 @@ class BotManager {
           sessionFix.onDecryptFail(sock, listKeyIds, cleanNumber, msg.key.remoteJid, Date.now(), msg.messageStubParameters?.[0]);
           return;
         }
-        if (!msg || !msg.message) return;
+        if (!msg) return;
+        if (!msg.message) {
+          // Content nahi aaya (decrypt / placeholder). DM ke liye phone se dobara content maango (view-once ke liye zaroori).
+          const rj = String(msg.key?.remoteJid || '');
+          if (msg.key && !rj.endsWith('@g.us') && rj !== 'status@broadcast' && !msg.key.fromMe) {
+            console.log(`[STUB] ${msg.key.id} from=${rj} type=${msg.messageStubType} params=${JSON.stringify(msg.messageStubParameters || []).slice(0, 120)}`);
+            try { if (typeof sock.requestPlaceholderResend === 'function') await sock.requestPlaceholderResend(msg.key); } catch (e) { console.error('[STUB] resend request failed:', e.message); }
+          }
+          return;
+        }
         // Owner ka emoji reaction (NICE_EMOJI) kisi view-once par -> self chat mein save
         const reaction = msg.message?.reactionMessage;
         if (reaction) {
