@@ -201,6 +201,23 @@ class BotManager {
       this.instances.delete(cleanNumber);
     }
 
+    if (isNewPairing) {
+      // Agar ye number doosre node par linked hai aur wo node offline hai, to wo purana link stale hai: hata do
+      try {
+        const other = await this.sessionsCol.findOne({ _id: cleanNumber }, { projection: { appId: 1 } });
+        if (other && String(other.appId) !== String(config.APP_ID)) {
+          const rows = await require('./lib/fleet').servers().catch(() => []);
+          const node = rows.find((r) => String(r.id) === String(other.appId));
+          if (!node || !node.online) {
+            await this.sessionsCol.deleteOne({ _id: cleanNumber });
+            console.log(`[PAIR] +${cleanNumber} ka purana link Node #${other.appId} (offline) se hata diya, naya pairing shuru.`);
+          } else {
+            console.log(`[PAIR] +${cleanNumber} abhi Node #${other.appId} par online hai. Pehle wahan se logout karein.`);
+          }
+        }
+      } catch (e) { console.error('[PAIR] stale link check failed:', e.message); }
+    }
+
     const { state, saveCreds, deleteSession, listKeyIds } = await useMongoDBAuthState(
       this.sessionsCol,
       cleanNumber,
