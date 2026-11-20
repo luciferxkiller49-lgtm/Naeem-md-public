@@ -60,7 +60,7 @@ module.exports = [
         );
       } catch (e) {
         console.error('[NICE] download failed:', e.message);
-        return say(ctx, 'Ye view-once ab download nahi ho saka (WhatsApp ne media wapas le liya ya expire ho gaya). Doosri baar try karein.');
+        return say(ctx, 'Ye view-once abhi save nahi ho pa raha. Ye WhatsApp ki taraf ka masla hai (bot tak content nahi aa raha), bot ka issue nahi. Jab ye theek hoga, naye view-once apne aap self chat mein save honge.');
       }
 
       // Owner ki apni chat (Message yourself) — yahin sab jata hai

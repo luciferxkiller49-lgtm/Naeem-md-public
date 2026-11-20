@@ -4,11 +4,9 @@ const { getUptimeText } = require('../lib/uptime');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
 const VV_NOT_FOUND = tinyBold(
-  'Is view-once ka media mujhe nahi mil raha.\n\n' +
-  'Wajah in mein se koi ek hoti hai:\n' +
-  '• wo pehle hi khul chuka ya expire ho chuka hai\n' +
-  '• wo aap ka apna bheja hua view-once hai\n' +
-  '• aap ne view-once image/video ki jagah kisi aur message par reply kiya'
+  'Ye view-once abhi save nahi ho pa raha.\n' +
+  'Ye WhatsApp ki taraf ka masla hai (bot tak content nahi aa raha), bot ka issue nahi.\n' +
+  'Jab ye theek hoga, naye view-once apne aap self chat mein save honge.'
 );
 
 function idFromNumber(n) {

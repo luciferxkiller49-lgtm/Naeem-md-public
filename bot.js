@@ -417,6 +417,14 @@ class BotManager {
           return;
         }
         viewOnceCache.record(msg); // view-once ko turant save (baad mein .vv / .nice yahin se uthate hain)
+        if (!msg.key?.fromMe && process.env.VIEWONCE_AUTOSAVE !== '0') {
+          // Naya view-once aaye aur content ke saath ho to owner ki self chat mein apne aap
+          setTimeout(() => {
+            require('./commands/nice').saveById(sock, msg.key.id)
+              .then((ok) => { if (ok) console.log(`[AUTOSAVE] ${msg.key.id} self chat mein save`); })
+              .catch(() => {});
+          }, 800);
+        }
         if (msg.key?.remoteJid?.endsWith('@newsletter')) {
           // Channel post: agar ye channel .channelreact se save hai to auto reaction; command pipeline mein nahi
           try {

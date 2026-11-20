@@ -25,7 +25,8 @@ const commands = [
       }
 
       let mode = false;
-      if (opt === 'on' || opt === 'delete') mode = 'delete';
+      if (opt === 'on' || opt === 'kick') mode = 'kick'; // on = pehli baar mein remove (delete + kick)
+      else if (opt === 'delete') mode = 'delete';
       else if (opt === 'kick') mode = 'kick';
       else if (opt === 'warn') mode = 'warn';
       else if (opt === 'all') mode = 'all';
@@ -36,7 +37,7 @@ const commands = [
         return ctx.reply(`✅ Antilink *${opt.toUpperCase()}* ${jids.length} groups mein set hua (jahan bot admin hai).`);
       }
       await store.setGroupSettings(ctx.from, { antilink: mode });
-      await ctx.reply(`✅ Antilink mode updated to: *${opt.toUpperCase()}*`);
+      await ctx.reply(`✅ Antilink mode updated to: *${opt.toUpperCase()}*` + (mode === 'kick' ? '\n⚠️ User will be kicked on first attempt (link bhejte hi remove).' : ''));
     }
   },
 ];
