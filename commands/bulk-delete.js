@@ -28,7 +28,8 @@ async function deleteKeys(ctx, chatId, keys) {
   let done = 0;
   for (const key of keys) {
     deleteGuard.mark(key.id);
-    try { await ctx.sock.sendMessage(chatId, { delete: key }); done++; } catch (e) {}
+    try { await ctx.sock.sendMessage(chatId, { delete: key }); done++; }
+    catch (e) { console.error(`[BULK] delete fail ${key.id} in ${chatId}: ${e.message}`); }
     await sleep(DELAY_MS);
   }
   return done;

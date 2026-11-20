@@ -296,23 +296,6 @@ module.exports = [
     },
   },
   {
-    name: 'acceptall',
-    description: 'Sab pending join requests accept karta hai (admin only)',
-    execute: async ({ sock, msg, from }) => {
-      if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: 'This command only works in groups.' });
-      const sender = msg.key.participant || msg.key.remoteJid;
-      if (!(await isAdmin(sock, from, sender))) return sock.sendMessage(from, { text: 'Only group admins can use this command.' });
-      try {
-        const list = await sock.groupRequestParticipantsList(from);
-        if (!list.length) return sock.sendMessage(from, { text: 'No pending requests.' });
-        await sock.groupRequestParticipantsUpdate(from, list.map((p) => p.jid), 'approve');
-        await sock.sendMessage(from, { text: `${list.length} requests accepted.` });
-      } catch {
-        await sock.sendMessage(from, { text: '❌ Could not accept.' });
-      }
-    },
-  },
-  {
     name: 'rejectall',
     description: 'Sab pending join requests reject karta hai (admin only)',
     execute: async ({ sock, msg, from }) => {
