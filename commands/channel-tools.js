@@ -1,11 +1,12 @@
-// Owner ke commands: .chstatus (admin/owner channel par post), .channelreact (channel posts par auto reaction),
-// .forwardbot (owner ka message sab linked numbers ki self chat mein ek baar).
+// Owner ke commands: .chstatus (channel par post; "all" = sab admin/owner channels),
+// .channelreact (channel par auto reaction; follow zaroori), .forwardbot (sab linked numbers ki self chat).
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const store = require('../lib/store');
-const { resolveChannel, CHANNEL_REACT_EMOJI } = require('../lib/channelTools');
+const { resolveChannel, roleOf, rememberChannel, knownChannels, CHANNEL_REACT_EMOJI } = require('../lib/channelTools');
 const broadcast = require('../lib/broadcast');
 
 const ownerOnly = (ctx) => ctx.isInstanceOwner || ctx.isOwner;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function quotedMediaOf(msg) {
   const ci = msg?.message?.extendedTextMessage?.contextInfo;
@@ -30,30 +31,62 @@ async function mediaBuffer(ctx, q) {
   return buf;
 }
 
+function postPayload(q, buf, text) {
+  if (!q) return { text };
+  if (q.type === 'image') return { image: buf, caption: text || undefined };
+  if (q.type === 'video') return { video: buf, caption: text || undefined };
+  if (q.type === 'audio') return { audio: buf, mimetype: q.node.mimetype || 'audio/mpeg' };
+  return { document: buf, mimetype: q.node.mimetype || 'application/octet-stream', fileName: q.node.fileName || 'file', caption: text || undefined };
+}
+
 module.exports = [
   {
     name: 'chstatus',
     aliases: [],
-    description: 'Channel par post (sirf wahan jahan aap admin/owner hain): .chstatus <channel link> <text> ya media par reply',
+    description: 'Channel par post: .chstatus <channel link> <text> | .chstatus all <text> (sab admin/owner channels) | media par reply',
     category: 'owner',
     async execute(ctx) {
       if (!ownerOnly(ctx)) return;
-      const [link, ...rest] = ctx.args || [];
-      if (!link) throw new Error(`Usage: ${ctx.prefix}chstatus <channel link> <text> (ya media par reply karke)`);
-      const ch = await resolveChannel(ctx.sock, link);
-      if (!['ADMIN', 'OWNER'].includes(ch.role)) throw new Error(`Aap is channel ke admin/owner nahi hain (role: ${ch.role})`);
-      const text = rest.join(' ').trim();
+      const args = ctx.args || [];
+      const first = args[0];
+      if (!first) throw new Error(`Usage: ${ctx.prefix}chstatus <channel link|all> <text> (ya media par reply karke)`);
+      const isAll = first.toLowerCase() === 'all';
+      const text = args.slice(1).join(' ').trim();
       const q = quotedMediaOf(ctx.msg);
-      if (q) {
-        const buf = await mediaBuffer(ctx, q);
-        const payload = q.type === 'image' ? { image: buf, caption: text || undefined }
-          : q.type === 'video' ? { video: buf, caption: text || undefined }
-          : q.type === 'audio' ? { audio: buf, mimetype: q.node.mimetype || 'audio/mpeg' }
-          : { document: buf, mimetype: q.node.mimetype || 'application/octet-stream', fileName: q.node.fileName || 'file', caption: text || undefined };
-        return ctx.sock.sendMessage(ch.jid, payload);
+      if (!q && !text) throw new Error('Post ka text likhein ya media par reply karein');
+
+      let targets;
+      if (isAll) {
+        targets = await knownChannels(ctx.botNumber);
+        if (!targets.length) throw new Error(`Koi channel save nahi. Pehle ${ctx.prefix}chstatus <link> ya ${ctx.prefix}channelreact <link> se channel add karein`);
+      } else {
+        const ch = await resolveChannel(ctx.sock, first);
+        await rememberChannel(ctx.botNumber, ch);
+        targets = [ch];
       }
-      if (!text) throw new Error('Post ka text likhein ya media par reply karein');
-      return ctx.sock.sendMessage(ch.jid, { text });
+
+      const buf = q ? await mediaBuffer(ctx, q) : null;
+      let ok = 0; let notAdmin = 0; let failed = 0;
+      for (const ch of targets) {
+        const role = await roleOf(ctx.sock, ch.jid);
+        if (!['ADMIN', 'OWNER'].includes(role)) {
+          notAdmin++;
+          if (!isAll) throw new Error(`Aap is channel ke admin/owner nahi hain (role: ${role}). Post nahi hogi.`);
+          continue;
+        }
+        try {
+          const res = await ctx.sock.sendMessage(ch.jid, postPayload(q, buf, text));
+          if (!res) throw new Error('WhatsApp ne post accept nahi ki');
+          ok++;
+        } catch (e) {
+          failed++;
+          console.error(`[CHSTATUS] ${ch.name} (${ch.jid}): ${e.message}`);
+          if (!isAll) throw new Error(`Post nahi hui: ${e.message}`);
+        }
+        if (isAll) await sleep(1500);
+      }
+      if (isAll) return ctx.reply(`✅ ${ok} channel mein post hui. ${notAdmin} mein aap admin/owner nahi. ${failed} mein fail.`);
+      return;
     },
   },
   {
@@ -64,19 +97,25 @@ module.exports = [
     async execute(ctx) {
       if (!ownerOnly(ctx)) return;
       const a = (ctx.args || [])[0];
-      const s = await store.getInstanceSettings(ctx.botNumber);
-      const list = Array.isArray(s.channelReact) ? s.channelReact : [];
       if (!a) throw new Error(`Usage: ${ctx.prefix}channelreact <channel link> (band karne ke liye: ${ctx.prefix}channelreact off)`);
       if (a.toLowerCase() === 'off') {
         await store.setInstanceSettings(ctx.botNumber, { channelReact: [] });
-        return;
+        return ctx.reply('✅ Channel reaction band kar diya.');
       }
       const ch = await resolveChannel(ctx.sock, a);
-      if (!list.includes(ch.jid)) {
-        await store.setInstanceSettings(ctx.botNumber, { channelReact: [...list, ch.jid] });
+      try {
+        await ctx.sock.newsletterFollow(ch.jid);
+      } catch (e) {
+        if (!/already|exist/i.test(String(e.message))) {
+          // Follow nahi hua to posts bot tak nahi aayengi, is liye save bhi nahi karte
+          throw new Error(`Channel follow nahi ho saka (${e.message}). Baileys update zaroori hai, warna channel posts bot tak nahi aayengi.`);
+        }
       }
-      await ctx.sock.newsletterFollow(ch.jid).catch(() => {});
-      return;
+      const s = await store.getInstanceSettings(ctx.botNumber);
+      const list = Array.isArray(s.channelReact) ? s.channelReact : [];
+      if (!list.includes(ch.jid)) await store.setInstanceSettings(ctx.botNumber, { channelReact: [...list, ch.jid] });
+      await rememberChannel(ctx.botNumber, ch);
+      return ctx.reply(`✅ ${ch.name} ki har nayi post par ${CHANNEL_REACT_EMOJI} react hoga.`);
     },
   },
   {
@@ -95,7 +134,6 @@ module.exports = [
         if (!text) throw new Error('Message likhein ya media par reply karein');
         await broadcast.publish({ kind: 'text', text });
       }
-      // Is number ki apni self chat mein foran
       await broadcast.deliverPending(ctx.sock, ctx.botNumber).catch(() => {});
       return;
     },

@@ -431,7 +431,8 @@ class BotManager {
             const cs = await store.getInstanceSettings(cleanNumber);
             if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid) && !msg.key.fromMe) {
               const serverId = msg.newsletterServerId || msg.key.id;
-              await sock.newsletterReactMessage(msg.key.remoteJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch(() => {});
+              console.log(`[CHREACT] post ${msg.newsletterServerId || msg.key.id} in ${msg.key.remoteJid}`);
+              await sock.newsletterReactMessage(msg.key.remoteJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch((e) => console.error('[CHREACT] failed:', e.message));
             }
           } catch (e) { /* reaction fail ho to bhi bot chalta rahe */ }
           return;
