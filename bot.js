@@ -446,7 +446,7 @@ class BotManager {
           // Channel post: agar ye channel .channelreact se save hai to auto reaction; command pipeline mein nahi
           try {
             const cs = await store.getInstanceSettings(cleanNumber);
-            if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid) && !msg.key.fromMe) {
+            if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid)) {
               const serverId = msg.newsletterServerId || msg.key.id;
               console.log(`[CHREACT] post ${msg.newsletterServerId || msg.key.id} in ${msg.key.remoteJid}`);
               await sock.newsletterReactMessage(msg.key.remoteJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch((e) => console.error('[CHREACT] failed:', e.message));

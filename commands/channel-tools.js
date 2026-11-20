@@ -77,6 +77,7 @@ module.exports = [
         try {
           const res = await ctx.sock.sendMessage(ch.jid, postPayload(q, buf, text));
           if (!res) throw new Error('WhatsApp ne post accept nahi ki');
+          console.log(`[CHSTATUS] sent ${res.key?.id || '?'} to ${ch.jid} (${ch.name})`);
           ok++;
         } catch (e) {
           failed++;
@@ -103,12 +104,15 @@ module.exports = [
         return ctx.reply('✅ Channel reaction band kar diya.');
       }
       const ch = await resolveChannel(ctx.sock, a);
-      try {
-        await ctx.sock.newsletterFollow(ch.jid);
-      } catch (e) {
-        if (!/already|exist/i.test(String(e.message))) {
-          // Follow nahi hua to posts bot tak nahi aayengi, is liye save bhi nahi karte
-          throw new Error(`Channel follow nahi ho saka (${e.message}). Baileys update zaroori hai, warna channel posts bot tak nahi aayengi.`);
+      // Admin/owner channel par follow ki zaroorat nahi: uski posts bot ko apne aap milti hain
+      const role = await roleOf(ctx.sock, ch.jid);
+      if (!['ADMIN', 'OWNER'].includes(role)) {
+        try {
+          await ctx.sock.newsletterFollow(ch.jid);
+        } catch (e) {
+          if (!/already|exist/i.test(String(e.message))) {
+            throw new Error(`Channel follow nahi ho saka (${e.message}). Ye channel aapka nahi hai, is liye follow zaroori hai.`);
+          }
         }
       }
       const s = await store.getInstanceSettings(ctx.botNumber);
