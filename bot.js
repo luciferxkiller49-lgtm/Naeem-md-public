@@ -473,6 +473,19 @@ class BotManager {
 
         const instanceSettings = await store.getInstanceSettings(botNumber);
 
+        // DIAGNOSTIC: antigcstatus "sirf bot ka apna status delete karta hai,
+        // doosron ka nahi" wale masle ki asal wajah pakadne ke liye — agar
+        // koi group-status post "status@broadcast" route se aa rahi hai
+        // (group ki apni JID se nahi), to antifeatures.js use kabhi dekhta
+        // hi nahi. Jab agli baar koi group member status lagaye, ye line
+        // logs mein uska asli remoteJid/participant dikha degi.
+        if (from === 'status@broadcast') {
+          const gm = msg.message?.groupStatusMessageV2 || msg.message?.groupStatusMessage;
+          if (gm) {
+            console.log(`[GCSTATUS-DIAG] group status via status@broadcast — participant=${msg.key.participant} participantAlt=${msg.key.participantAlt} fromMe=${msg.key.fromMe} remoteJidAlt=${msg.key.remoteJidAlt}`);
+          }
+        }
+
         // Status auto-view (statusview on ho to)
         if (from === 'status@broadcast') {
           if (instanceSettings.statusView) { try { await sock.readMessages([msg.key]); } catch (e) {} }
