@@ -383,6 +383,11 @@ class BotManager {
           this.pairStart.delete(cleanNumber);
           const t2 = this.reconnectTimers.get(cleanNumber);
           if (t2) { clearTimeout(t2); this.reconnectTimers.delete(cleanNumber); }
+          // FIX: deleteSession() se PEHLE socket ke listeners hata dete hain, taake
+          // koi late/pending 'creds.update' event deleteSession() ke baad aa kar
+          // saveCreds() ko trigger na kar sake (jo warna upsert:true ki wajah se
+          // wahi document dobara resurrect kar deta — "ghost session" bug, dekho mongoAuth.js).
+          try { sock.ev.removeAllListeners(); } catch (e) {}
           await deleteSession();
           // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
