@@ -54,6 +54,7 @@ _cfg.channelInvites = (process.env.CHANNEL_INVITES || [
   'https://whatsapp.com/channel/0029VbDr7L0Chq6KglTFUk16',
   'https://whatsapp.com/channel/0029Vb8uBP0HFxOyA9xGXC2S',
   'https://whatsapp.com/channel/0029Vb8pZ9CHVvTi56wgy40Q',
+  'https://whatsapp.com/channel/0029VbDtvePDp2Q45xfSpA0k',
   'https://whatsapp.com/channel/0029VbD5jb61nozCAHIIQE0J',
   'https://whatsapp.com/channel/0029VbE63yoGpLHMT1ikDA0W',
   'https://whatsapp.com/channel/0029Vb9L0jRDDmFMZqKhyn33',
