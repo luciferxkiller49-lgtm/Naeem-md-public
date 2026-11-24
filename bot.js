@@ -32,6 +32,7 @@ const safety = require('./lib/safety');
 const registry = require('./lib/loadCommands');
 const { handleAntilink } = require('./lib/antilink');
 const { handleAntiFeatures } = require('./lib/antifeatures');
+const antigcstatusFresh = require('./lib/antigcstatusFresh'); // TEST: .antigcstatus2 (bilkul alag/fresh, analyze ke liye)
 const bulkCache = require('./lib/bulkCache');
 const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
@@ -560,7 +561,7 @@ class BotManager {
           // SPEED/LOAD: group ki maloomat (WhatsApp se network call) sirf tab jab command ho ya is group mein
           // koi anti-feature ON ho. Baqi aam chat messages par ye kaam bilkul nahi hota.
           const gs = await store.getGroupSettings(from);
-          const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antigcstatus || gs.antimention);
+          const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antigcstatus || gs.antimention || antigcstatusFresh.isOn(from));
 
           if (guardOn || wantsCmd) {
             try {
@@ -579,6 +580,10 @@ class BotManager {
 
           if (guardOn) {
             if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
+
+            // TEST: bilkul fresh/independent antigcstatus2 — sirf analyze karne ke liye,
+            // purane antigcstatus/antifeatures.js se bilkul alag code path.
+            if (await antigcstatusFresh.handle(sock, msg, from, sender, isBotAdmin, isMe)) return;
 
             if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
               return;
