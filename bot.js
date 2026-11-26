@@ -521,6 +521,13 @@ class BotManager {
         }
 
         if (safety.isRateLimited(`${botNumber}:${sender}`)) {
+          // FIX: pehle ye poori tarah chup reh jata tha — koi reaction, koi
+          // reply nahi. Agar user ne 1.5s cooldown ke andar dobara bhej dia,
+          // ye bilkul silently drop ho jata, aur user ko lagta "bot slow hai
+          // / 3-4 baar likhna padta hai" jabke asal mein pehli koshish ja
+          // chuki thi, baaki drop ho rahi thin. Ab ek halki reaction dete
+          // hain taake pata chale message mil gaya, bas cooldown chal raha hai.
+          sock.sendMessage(from, { react: { text: '⌛', key: msg.key } }).catch(() => {});
           return;
         }
 
