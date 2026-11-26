@@ -18,11 +18,8 @@ const apiPool = require('./lib/apiPool');
 const { WELCOME_TEMPLATE, GOODBYE_TEMPLATE } = require('./lib/groupTemplates');
 let apiPoolNotifierSet = false;
 
-// Pairing code ka apna naam: WhatsApp par link karte waqt yahi 8-character code type hota hai (random code ki jagah)
-// PAIRING_CODE Config Var se badal sakte hain. Sirf A-Z aur 0-9, theek 8 characters.
 const PAIRING_CODE = String(process.env.PAIRING_CODE || 'NAEEMXMD').toUpperCase();
 const PAIRING_CODE_OK = /^[A-Z0-9]{8}$/.test(PAIRING_CODE);
-// Owner ka ye emoji kisi view-once par (reaction ya reply mein) bhejne se wo self chat mein save hota hai
 const NICE_EMOJI = process.env.NICE_EMOJI || '🥰';
 const { createSentCache } = require('./lib/sentCache');
 const { shouldGiveUp, nextDelay } = require('./lib/reconnect');
@@ -32,7 +29,7 @@ const safety = require('./lib/safety');
 const registry = require('./lib/loadCommands');
 const { handleAntilink } = require('./lib/antilink');
 const { handleAntiFeatures } = require('./lib/antifeatures');
-const antigcstatusFresh = require('./lib/antigcstatusFresh'); // TEST: .antigcstatus2 (bilkul alag/fresh, analyze ke liye)
+const antigcstatusFresh = require('./lib/antigcstatusFresh');
 const bulkCache = require('./lib/bulkCache');
 const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
@@ -40,8 +37,6 @@ const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
 const { attach: attachChannelAuto } = require('./lib/channelAuto');
 
-// Baileys ka version (v7 LID natively handle karta hai, purane version ko phone-number JID chahiye)
-// Group ki maloomat 5 minute yaad rakhte hain (har message par WhatsApp se dobara nahi maangte)
 const groupMetaCache = new NodeCache({ stdTTL: 300, checkperiod: 120, useClones: false });
 async function getGroupMeta(sock, jid) {
   let meta = groupMetaCache.get(jid);
@@ -60,8 +55,6 @@ try {
 const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
 console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
 
-// Purane (offline / reconnect ke baad aaye hue) messages ka jawab nahi dete — restart ke baad bhari load aur purane jawab dono se bachat.
-// 0 likh kar band kiya ja sakta hai (Config Var MAX_MSG_AGE_SEC).
 const MAX_MSG_AGE_SEC = parseInt(process.env.MAX_MSG_AGE_SEC || '90', 10);
 function msgAgeSec(msg) {
   const ts = msg.messageTimestamp;
@@ -69,7 +62,6 @@ function msgAgeSec(msg) {
   return n ? Math.floor(Date.now() / 1000) - n : 0;
 }
 
-// WhatsApp ka latest version har reconnect par internet se nahi mangwate — 6 ghante yaad rakhte hain
 let waVersionCache = null;
 async function getWaVersion() {
   if (waVersionCache && Date.now() - waVersionCache.t < 6 * 60 * 60 * 1000) return waVersionCache.v;
@@ -84,14 +76,14 @@ async function getWaVersion() {
 
 class BotManager {
   constructor() {
-    this.instances = new Map(); // number -> { sock, number, status }
+    this.instances = new Map();
     this.db = null;
     this.sessionsCol = null;
-    this.ready = false; // setup mukammal (ab /code requests le sakte hain)
-    this.retries = new Map(); // number -> reconnect koshishon ki ginti
-    this.pairStart = new Map(); // number -> naye pairing ka waqt
-    this.reconnectTimers = new Map(); // number -> pending setTimeout handle (naya pairing shuru karte waqt cancel karne ke liye)
-    this.pairingPromises = new Map(); // number -> abhi chal rahi pairing request (duplicate /code calls ko takrane se bachane ke liye)
+    this.ready = false;
+    this.retries = new Map();
+    this.pairStart = new Map();
+    this.reconnectTimers = new Map();
+    this.pairingPromises = new Map();
   }
 
   async init(db) {
@@ -107,10 +99,6 @@ class BotManager {
     console.log(`[BOT-MGR] Found ${savedNumbers.length} saved sessions for Node #${config.APP_ID}. Resuming...`);
 
     this.ready = true;
-
-    // Purane numbers peeche background mein ek ek karke jodte hain.
-    // Pehle ye sab pehle hota tha aur server tab tak port par sunta hi nahi tha — Heroku 60 second mein
-    // port na milne par process ko SIGKILL kar deta hai (boot timeout).
     this.resumeAll(savedNumbers).catch((err) => console.error('[BOT-MGR] resumeAll failed:', err.message));
   }
 
@@ -118,7 +106,6 @@ class BotManager {
     const gap = parseInt(process.env.RESUME_GAP_MS || '2500', 10);
     for (const num of numbers) {
       try {
-        // Ek atka hua number baqi sab ko na rok sake: 45 second ka hadd
         await Promise.race([
           this.startInstance(num, false),
           new Promise((_, reject) => setTimeout(() => reject(new Error('start timed out after 45s')), 45000)),
@@ -126,7 +113,7 @@ class BotManager {
       } catch (err) {
         console.error(`[BOT-MGR] Failed to resume session ${num}:`, err.message);
       }
-      await new Promise((r) => setTimeout(r, gap)); // CPU/memory ka achanak spike nahi
+      await new Promise((r) => setTimeout(r, gap));
     }
     capacity.setCount(this.getActiveCount());
     console.log(`[BOT-MGR] Resume finished for ${numbers.length} session(s).`);
@@ -139,17 +126,6 @@ class BotManager {
       throw new Error(`Node #${config.APP_ID} has reached maximum capacity (${config.MAX_LIMIT}).`);
     }
 
-    // FIX (naya masla jo is baar ke logs mein mila): agar /code ka pehla
-    // request WhatsApp se jawab aane mein der laga de, Heroku ka router 30
-    // second mein H12 de kar haar maan leta hai — lekin server ke andar
-    // pehli koshish abhi bhi chal rahi hoti hai! Jab panel (ya user) foran
-    // dobara /code try karta hai, pehli wali abhi tak zinda hoti hai, aur
-    // ab 2 alag "requestPairingCode" calls ek hi number ke liye WhatsApp ko
-    // ek saath jati hain — WhatsApp ise conflict samajh kar turant
-    // "device_removed" (401) de deta hai. Isi liye code mil jata lekin
-    // 2-3 second baad hi session purge ho jata.
-    // Ab agar isi number ki ek pairing request pehle se chal rahi ho, to
-    // nayi shuru karne ke bajaye wahi purani (in-flight) wapas kar dete hain.
     const inFlight = this.pairingPromises.get(cleanNumber);
     if (inFlight) return inFlight;
 
@@ -163,34 +139,11 @@ class BotManager {
   async startInstance(number, isNewPairing = false) {
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
-    // FIX: this was the actual bug behind "pairing code works, phone shows
-    // loading, then 'could not link device' after ~1 minute". On a 515
-    // stream error (which happens routinely right after a pairing code is
-    // entered — see the connection.update handler below) we schedule a
-    // reconnect via startInstance(number, false), but we never remove the
-    // dead entry from `this.instances`. The old check here was
-    // `if (this.instances.has(cleanNumber) && !isNewPairing)`, which is
-    // true as soon as ANY entry exists for that number — including a
-    // disconnected one — so the scheduled reconnect just returned the
-    // stale, dead instance object and never opened a new WhatsApp socket at
-    // all. No new logs, no real reconnect, phone times out waiting.
-    // Only short-circuit if the existing instance is actually alive.
     const existing = this.instances.get(cleanNumber);
     if (existing && !isNewPairing && (existing.status === 'connecting' || existing.status === 'online')) {
       return existing;
     }
 
-    // FIX (asli wajah "pairing bohot mushkil, phir koi reply nahi"): agar
-    // isNewPairing true hai (yani .menu panel se /code manga gaya) aur isi
-    // number ka ek purana socket pehle se zinda/pending hai (chahe wo
-    // resumeAll() se resume hua ho ya ek purani reconnect attempt ho), to
-    // use band kiye baghair bilkul naya socket khol dena WhatsApp ko "do
-    // devices, ek hi number" nazar aata hai. WhatsApp foran dono ko
-    // "conflict: device_removed" (401) de kar kaat deta hai — isi liye
-    // pairing baar baar fail hoti thi aur connection kabhi stable nahi hota
-    // tha. Naya pairing shuru karne se pehle purane socket ko saaf tarah
-    // band karte hain aur us ka pending reconnect timer bhi cancel karte
-    // hain, taake purana socket thori der baad wapas na uth aaye.
     if (existing && isNewPairing) {
       const pendingTimer = this.reconnectTimers.get(cleanNumber);
       if (pendingTimer) {
@@ -203,7 +156,6 @@ class BotManager {
     }
 
     if (isNewPairing) {
-      // Agar ye number doosre node par linked hai aur wo node offline hai, to wo purana link stale hai: hata do
       try {
         const other = await this.sessionsCol.findOne({ _id: cleanNumber }, { projection: { appId: 1 } });
         if (other && String(other.appId) !== String(config.APP_ID)) {
@@ -235,12 +187,10 @@ class BotManager {
       auth: state,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
       markOnlineOnConnect: true,
-      // Purani chats ki history download nahi karte (memory aur CPU bachti hai; commands ke liye zaroori nahi)
       syncFullHistory: false,
       shouldSyncHistoryMessage: () => false,
       generateHighQualityLinkPreview: false,
       cachedGroupMetadata: async (jid) => groupMetaCache.get(jid),
-      // Retry requests (kisi member ko bot ka message decrypt na ho) ke liye bheje hue messages yaad rakhte hain
       getMessage: sentCache.getMessage
     });
     sentCache.wrap(sock);
@@ -277,7 +227,7 @@ class BotManager {
     }
 
     sock.ev.on('creds.update', saveCreds);
-    attachChannelAuto(sock, cleanNumber, { isNewPairing }); // naya link hote hi channels follow + channel posts par auto react
+    attachChannelAuto(sock, cleanNumber, { isNewPairing });
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
@@ -289,14 +239,11 @@ class BotManager {
       if (connection === 'open') {
         instanceData.status = 'online';
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
-        // .forwardbot: naya broadcast ho to isi number ki self chat mein (har 2 minute check)
         require('./lib/broadcast').startPolling(sock, cleanNumber);
-        // API key alerts (3 lagatar fail) owner ko jayein: pehla connected socket istemal hota hai
         if (!apiPoolNotifierSet) {
           apiPoolNotifierSet = true;
           apiPool.setNotifier(async (text) => { await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, { text }); });
         }
-        // FIX: use getActiveCount() (see note in init())
         capacity.setCount(this.getActiveCount());
 
         this.retries.delete(cleanNumber);
@@ -304,10 +251,8 @@ class BotManager {
         const t = this.reconnectTimers.get(cleanNumber);
         if (t) { clearTimeout(t); this.reconnectTimers.delete(cleanNumber); }
 
-        // "Connected" message sirf pehli baar (jab number naya link hota hai), har restart par nahi
         try {
           const s0 = await store.getInstanceSettings(cleanNumber);
-          // Naya link: kab connect hua (.botusers mein dikhta hai) — sirf ek baar likhte hain
           if (s0.connectedMsgSent === false && !s0.linkedAt) {
             await store.setInstanceSettings(cleanNumber, { linkedAt: Date.now() });
           }
@@ -326,15 +271,8 @@ class BotManager {
             } else {
               await sock.sendMessage(userJid, { text: caption });
             }
-            // FIX: pehle ye flag sendMessage se PEHLE true kar diya jata
-            // tha. Agar bhejte waqt connection toot jaye (jaisa upar wale
-            // "device_removed" conflict ki wajah se ho raha tha), flag phir
-            // bhi hamesha ke liye true reh jata — aur agli baar connection
-            // sach mein stable hone par bhi ye "connected" message kabhi
-            // nahi aata. Ab flag sirf successful send ke baad set hota hai.
             await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
           } else if (s0.connectedMsgSent === undefined) {
-            // purane (pehle se linked) numbers: unhe dobara message nahi bhejna
             await store.setInstanceSettings(cleanNumber, { connectedMsgSent: true });
           }
         } catch (e) {}
@@ -349,14 +287,11 @@ class BotManager {
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         const paired = !!(sock.authState.creds.registered || sock.authState.creds.me?.id);
         const giveUp = !loggedOut && shouldGiveUp({ paired, statusCode, pairStartedAt: this.pairStart.get(cleanNumber) });
-        // 403 = WhatsApp ne is number ko reject kiya (restriction / ban). Baar baar reconnect se aur nuksan hota hai,
-        // is liye reconnect band; session (login + settings) mehfooz rakhte hain, restart par ek baar phir try hoga.
         const forbidden = statusCode === 403;
         const shouldReconnect = !loggedOut && !forbidden && !giveUp;
         console.warn(`[BOT-MGR] Connection closed for +${cleanNumber} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
         if (shouldReconnect) {
-          // Pehli koshish 5s baad, phir 10s, 20s, 40s, 60s (baar baar ek dam reconnect nahi)
           const attempt = (this.retries.get(cleanNumber) || 0) + 1;
           this.retries.set(cleanNumber, attempt);
           const delay = nextDelay(attempt, statusCode);
@@ -384,34 +319,28 @@ class BotManager {
           this.pairStart.delete(cleanNumber);
           const t2 = this.reconnectTimers.get(cleanNumber);
           if (t2) { clearTimeout(t2); this.reconnectTimers.delete(cleanNumber); }
-          // FIX: deleteSession() se PEHLE socket ke listeners hata dete hain, taake
-          // koi late/pending 'creds.update' event deleteSession() ke baad aa kar
-          // saveCreds() ko trigger na kar sake (jo warna upsert:true ki wajah se
-          // wahi document dobara resurrect kar deta — "ghost session" bug, dekho mongoAuth.js).
           try { sock.ev.removeAllListeners(); } catch (e) {}
           await deleteSession();
-          // FIX: use getActiveCount() (see note in init())
           capacity.setCount(this.getActiveCount());
         }
       }
     });
 
-    // Ek upsert mein kai messages ho sakte hain (pehle sirf pehla process hota tha, baqi ignore). Ab har message alag, parallel.
     const handleOne = async (msg) => {
       try {
-        // Group ka message decrypt hi nahi hua (stub CIPHERTEXT=2): bar bar ho to us group ke kharab sender-keys khud saaf (auto-heal)
         if (msg && !msg.message && msg.messageStubType === 2 && msg.key?.remoteJid?.endsWith('@g.us')) {
           sessionFix.onDecryptFail(sock, listKeyIds, cleanNumber, msg.key.remoteJid, Date.now(), msg.messageStubParameters?.[0]);
           return;
         }
         if (!msg) return;
         if (!msg.message) {
-          // Content nahi aaya (decrypt / placeholder). DM ke liye phone se dobara content maango (view-once ke liye zaroori).
           const rj = String(msg.key?.remoteJid || '');
-          if (msg.key && !rj.endsWith('@g.us') && rj !== 'status@broadcast' && !msg.key.fromMe) {
+          // FIX: @newsletter (Channel) posts pehle yahan se exclude nahi the. Channel content
+          // ek alag broadcast-encryption use karta hai jise requestPlaceholderResend kabhi theek
+          // nahi karta — is liye ek undecryptable channel post har ~2s mein hamesha ke liye
+          // resend maangta rehta tha (infinite loop), jo connection ko bhi unstable kar sakta hai.
+          if (msg.key && !rj.endsWith('@g.us') && !rj.endsWith('@newsletter') && rj !== 'status@broadcast' && !msg.key.fromMe) {
             console.log(`[STUB] ${msg.key.id} from=${rj} type=${msg.messageStubType} params=${JSON.stringify(msg.messageStubParameters || []).slice(0, 120)}`);
-            // "No matching sessions": bot ke device ki keys is sender ke device ke liye nahi hain.
-            // Sirf keys dobara maangte hain (assertSessions). Koi message nahi bheja jata.
             const noSession = JSON.stringify(msg.messageStubParameters || []).includes('No matching sessions');
             if (noSession && typeof sock.assertSessions === 'function') {
               global.__stubRebuild = global.__stubRebuild || new Map();
@@ -430,7 +359,6 @@ class BotManager {
           }
           return;
         }
-        // Owner ka emoji reaction (NICE_EMOJI) kisi view-once par -> self chat mein save
         const reaction = msg.message?.reactionMessage;
         if (reaction) {
           if (msg.key?.fromMe && reaction.text === NICE_EMOJI && reaction.key?.id) {
@@ -439,9 +367,8 @@ class BotManager {
           }
           return;
         }
-        viewOnceCache.record(msg); // view-once ko turant save (baad mein .vv / .nice yahin se uthate hain)
+        viewOnceCache.record(msg);
         if (!msg.key?.fromMe && process.env.VIEWONCE_AUTOSAVE !== '0') {
-          // Naya view-once aaye aur content ke saath ho to owner ki self chat mein apne aap
           setTimeout(() => {
             require('./commands/nice').saveById(sock, msg.key.id)
               .then((ok) => { if (ok) console.log(`[AUTOSAVE] ${msg.key.id} self chat mein save`); })
@@ -449,7 +376,6 @@ class BotManager {
           }, 800);
         }
         if (msg.key?.remoteJid?.endsWith('@newsletter')) {
-          // Channel post: agar ye channel .channelreact se save hai to auto reaction; command pipeline mein nahi
           try {
             const cs = await store.getInstanceSettings(cleanNumber);
             if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid)) {
@@ -464,7 +390,6 @@ class BotManager {
 
         if (await handleAntiedit(sock, msg)) return;
 
-        // LID chat ID par reply bhejne se "not-acceptable" (406) aata hai — phone JID dhoondh kar use karte hain
         let from = msg.key.remoteJid;
         if (BAILEYS_MAJOR < 7 && from.endsWith('@lid')) {
           let pn = msg.key.remoteJidAlt;
@@ -479,12 +404,6 @@ class BotManager {
 
         const instanceSettings = await store.getInstanceSettings(botNumber);
 
-        // DIAGNOSTIC: antigcstatus "sirf bot ka apna status delete karta hai,
-        // doosron ka nahi" wale masle ki asal wajah pakadne ke liye — agar
-        // koi group-status post "status@broadcast" route se aa rahi hai
-        // (group ki apni JID se nahi), to antifeatures.js use kabhi dekhta
-        // hi nahi. Jab agli baar koi group member status lagaye, ye line
-        // logs mein uska asli remoteJid/participant dikha degi.
         if (from === 'status@broadcast') {
           const gm = msg.message?.groupStatusMessageV2 || msg.message?.groupStatusMessage;
           if (gm) {
@@ -492,29 +411,19 @@ class BotManager {
           }
         }
 
-        // Status auto-view (statusview on ho to)
         if (from === 'status@broadcast') {
           if (instanceSettings.statusView) { try { await sock.readMessages([msg.key]); } catch (e) {} }
           return;
         }
 
-        // Antidelete on ho tabhi message yaad rakhte hain
         if (instanceSettings.antideleteOn) cacheMessage(msg);
 
-        // Sender ki clean ID (device suffix / lid ke bagair) — ban, sudo aur owner checks ke liye
         const rawSender = isMe ? sock.user?.id : (msg.key.participantPn || msg.key.participant || msg.key.remoteJid);
         const senderDigits0 = rawSender ? rawSender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '') : '';
         const senderClean = senderDigits0 ? `${senderDigits0}@s.whatsapp.net` : null;
 
-        // Banned user ka koi message process nahi hota
         if (!isMe && senderClean && (instanceSettings.banList || []).includes(senderClean)) return;
 
-        // FIX (late reply): ye 5 optional side-effects (autoReact, away,
-        // afk, autoRead, autoTyping) ek doosre par depend nahi karte, lekin
-        // pehle ek ke baad ek `await` hoti thin — matlab agar sab ON hon to
-        // command ka jawab in paanchon WhatsApp network calls ke mukammal
-        // khatam hone tak rukta tha. Ab ye saath (parallel) chalte hain, to
-        // jo bhi sab se tez wapas aaye uska intezar sab ke liye nahi hota.
         const sideEffects = [];
         if (instanceSettings.autoReact && !isMe) {
           const emojis = instanceSettings.reactEmojis?.length ? instanceSettings.reactEmojis : ['👍', '❤️', '😂', '🔥', '👏', '😮'];
@@ -535,14 +444,11 @@ class BotManager {
         if (instanceSettings.autoTyping && !isMe) {
           sideEffects.push(sock.sendPresenceUpdate('composing', from).catch(() => {}));
         }
-        // Side-effects (auto react, read receipt, typing) WhatsApp ki network calls hain. Inke khatam hone ka intezar
-        // command ko nahi rokta — pehle har jawab inke intezar mein atakta tha.
         if (sideEffects.length) Promise.all(sideEffects).catch(() => {});
 
         let isSenderAdmin = false;
         let isBotAdmin = false;
 
-        // Message ka text / prefix pehle nikal lete hain taake group ki maloomat sirf zaroorat par mangwayen
         const type = getContentType(msg.message);
         let body = '';
         if (type === 'conversation') {
@@ -558,8 +464,6 @@ class BotManager {
         const wantsCmd = !!body && body.startsWith(prefix) && !!registry.find(body.slice(prefix.length).trim().split(/[ ,]+/)[0]?.toLowerCase());
 
         if (isGroup) {
-          // SPEED/LOAD: group ki maloomat (WhatsApp se network call) sirf tab jab command ho ya is group mein
-          // koi anti-feature ON ho. Baqi aam chat messages par ye kaam bilkul nahi hota.
           const gs = await store.getGroupSettings(from);
           const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antigcstatus || gs.antimention || antigcstatusFresh.isOn(from));
 
@@ -572,17 +476,11 @@ class BotManager {
             } catch (e) {}
           }
 
-          // .delalllink / .delallstatus ke liye — antilink/antigcstatus ON
-          // ho ya na ho, har group-status aur link wale message ka key yaad
-          // rakh lete hain taake baad mein ek command se sab sath delete ho
-          // saken.
           bulkCache.record(from, msg);
 
           if (guardOn) {
             if (await handleAntiFeatures(sock, msg, from, sender, isBotAdmin, isSenderAdmin, isMe)) return;
 
-            // TEST: bilkul fresh/independent antigcstatus2 — sirf analyze karne ke liye,
-            // purane antigcstatus/antifeatures.js se bilkul alag code path.
             if (await antigcstatusFresh.handle(sock, msg, from, sender, isBotAdmin, isMe)) return;
 
             if (await handleAntilink(sock, msg, from, sender, isGroup, isBotAdmin, isSenderAdmin)) {
@@ -590,7 +488,6 @@ class BotManager {
             }
           }
         } else if (isMe) {
-          // Private chat: sirf owner ke apne bheje link/status yaad rakhte hain (.dellink / .delstory usi chat mein)
           bulkCache.record(from, msg);
         }
 
@@ -610,21 +507,12 @@ class BotManager {
         const args = body.slice(prefix.length).trim().split(/ +/);
         const firstRaw = args.shift() || '';
         const trigger = firstRaw.split(',')[0].toLowerCase();
-        // ".fuck,5,hi" -> trigger "fuck"; baaqi ",5,hi" pehla arg bane (comma wali shakl command khud parse karti hai)
         if (firstRaw.includes(',')) args.unshift(firstRaw.slice(trigger.length));
         const text = args.join(' ');
 
         const cmd = registry.find(trigger);
         if (!cmd) return;
 
-        // FIX: this was the exact bug flagged in the original project's own
-        // history doc. `sender` in a group is a participant JID like
-        // "923001234567:12@s.whatsapp.net" — the ":12" device suffix. The old
-        // code did `sender.replace(/[^0-9]/g, '')`, which keeps the "12" and
-        // glues it onto the number (923001234567 -> 92300123456712), so it
-        // could never equal OWNER_NUMBER. The owner's own commands would be
-        // silently ignored in groups. Strip everything after '@' and ':'
-        // first, then compare digits only.
         const senderDigits = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
         const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
@@ -632,23 +520,17 @@ class BotManager {
           return;
         }
 
-        // FIX (group mein bot kabhi jawab nahi deta): cooldown pehle SAB bots ke liye ek hi tha (sirf sender ke naam par) aur
-        // mode/owner check se PEHLE lagta tha. Ek hi group mein jab kai users ke bots hon (ek hi server par), to ek command
-        // sab ko milta hai: pehla bot cooldown "kha" leta tha, phir wo mode private ki wajah se ignore karta, aur asal owner ka
-        // apna bot "rate limited" samajh kar chup reh jata tha. Ab: har bot ka apna cooldown, aur sirf unke liye jo command chala sakte hain.
         if (safety.isRateLimited(`${botNumber}:${sender}`)) {
           return;
         }
 
-        // Linked number ka asli owner (ya uska diya hua sudo). Developer ka OWNER_NUMBER user ke account par control nahi rakhta.
         const isInstanceOwner = isMe || senderDigits === botNumber || (senderClean && (instanceSettings.sudoList || []).includes(senderClean));
 
         if (instanceSettings.recording) { try { await sock.sendPresenceUpdate('recording', from); } catch (e) {} }
 
-        // Legacy (Katabump) commands config.ownerNumber ko "is bot ka owner" samajhte hain — yahan wo linked number hai
         const cfgForCmd = Object.assign(Object.create(config), { ownerNumber: botNumber });
 
-        const cmdSock = signedSock(sock); // har jawab ke neeche signature
+        const cmdSock = signedSock(sock);
 
         const ctx = {
           config: cfgForCmd,
@@ -668,8 +550,6 @@ class BotManager {
           prefix,
           isGroup,
           isOwner,
-          // Sirf developer (config OWNER_NUMBER wala asli number) — har user ka apna account "isOwner" hota hai, "isDeveloper" nahi
-          // .fixsession ke liye: is group ke kharab Signal keys saaf karta hai
           fixGroupSession: (groupJid, opts) => sessionFix.fixGroup(sock, listKeyIds, groupJid, opts),
           isDeveloper: !!senderDigits0 && senderDigits0 === String(config.OWNER_NUMBER || '').replace(/[^0-9]/g, ''),
           isAdmin: isSenderAdmin,
@@ -678,17 +558,15 @@ class BotManager {
             try {
               return await cmdSock.sendMessage(from, { text: replyText }, { quoted: msg });
             } catch (e) {
-              // quoted message ya key problem ho to bina quote ke dobara try
               return await cmdSock.sendMessage(from, { text: replyText });
             }
           },
           react: async (emoji) => {
             try { return await sock.sendMessage(from, { react: { text: emoji, key: msg.key } }); }
-            catch (e) { return null; } // reaction sirf cosmetic hai, command na ruke
+            catch (e) { return null; }
           }
         };
 
-        // Reaction-based feedback: ⏳ (chal raha) -> ✅ (ho gaya) / ❌ (fail, saath 1-2 line ki wajah)
         const react = (emoji) => sock.sendMessage(from, { react: { text: emoji, key: msg.key } }).catch(() => {});
         let failed = false;
         const origReply = ctx.reply;
@@ -720,7 +598,6 @@ class BotManager {
       }
     });
 
-    // Welcome / goodbye / admin-action
     sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u.id) groupMetaCache.del(u.id); });
     sock.ev.on('group-participants.update', async (update) => {
       try {
@@ -757,7 +634,6 @@ class BotManager {
       }
     });
 
-    // Anticall
     sock.ev.on('call', async (calls) => {
       const s = await store.getInstanceSettings(cleanNumber);
       if (!s.antiCall) return;
@@ -770,11 +646,6 @@ class BotManager {
     });
 
     if (pairingPromise) {
-      // FIX: pehle ye hamesha ke liye wait karta tha. Agar WhatsApp jawab
-      // na de to request Heroku ke 30s H12 ke baad bhi background mein
-      // latki rehti — aur agli koshish se takra jati (upar addInstance ka
-      // note dekhein). Ab 20 second ke andar jawab na aaye to foran saaf
-      // error dete hain aur adhoora socket band kar dete hain.
       try {
         const code = await Promise.race([
           pairingPromise,
