@@ -16,11 +16,12 @@ const commands = [
       if (!opt || !['on', 'off', 'delete', 'kick', 'warn', 'all'].includes(opt)) {
         return ctx.reply(
           `⚙️ *Antilink Configuration*\n\n` +
-          `• *${ctx.prefix}antilink on* (auto-delete link)\n` +
-          `• *${ctx.prefix}antilink warn* (warn up to 3 times then kick)\n` +
-          `• *${ctx.prefix}antilink kick* (instant kick upon link)\n` +
-          `• *${ctx.prefix}antilink all* (detect all URLs, not just WhatsApp)\n` +
-          `• *${ctx.prefix}antilink off* (disable)`
+          `• *${ctx.prefix}antilink on* — link bhejte hi delete + remove\n` +
+          `• *${ctx.prefix}antilink delete* — sirf link delete\n` +
+          `• *${ctx.prefix}antilink warn* — 3 warning par remove\n` +
+          `• *${ctx.prefix}antilink kick* — link bhejte hi remove\n` +
+          `• *${ctx.prefix}antilink all* — har tarah ka link detect\n` +
+          `• *${ctx.prefix}antilink off* — band`
         );
       }
 
@@ -34,10 +35,10 @@ const commands = [
       if (selfScope) {
         const { jids } = await groupTargets(ctx, { adminOnly: true });
         for (const jid of jids) await store.setGroupSettings(jid, { antilink: mode });
-        return ctx.reply(`✅ Antilink *${opt.toUpperCase()}* ${jids.length} groups mein set hua (jahan bot admin hai).`);
+        return ctx.reply(`✅ Antilink *${opt.toUpperCase()}* ${jids.length} groups mein set hua — jahan bot admin hai.`);
       }
       await store.setGroupSettings(ctx.from, { antilink: mode });
-      await ctx.reply(`✅ Antilink mode updated to: *${opt.toUpperCase()}*` + (mode === 'kick' ? '\n⚠️ User will be kicked on first attempt (link bhejte hi remove).' : ''));
+      await ctx.reply(`✅ Antilink mode updated to: *${opt.toUpperCase()}*` + (mode === 'kick' ? '\n⚠️ Link bhejte hi user remove ho jayega.' : ''));
     }
   },
 ];

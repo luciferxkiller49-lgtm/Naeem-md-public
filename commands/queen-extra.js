@@ -26,6 +26,7 @@ const commands = [
     description: 'Follow, unfollow or mute a WhatsApp Newsletter channel',
     category: 'utility',
     async execute(ctx) {
+      if (!ctx.isInstanceOwner) return ctx.reply('❌ This command is only for the bot owner.');
       const action = ctx.args[0]?.toLowerCase();
       const channelJid = ctx.args[1];
 

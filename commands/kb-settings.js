@@ -116,13 +116,45 @@ module.exports = [
   },
   {
     name: 'settings',
-    description: 'Saari settings ek nazar mein',
-    async execute({ sock, from, isInstanceOwner, botNumber }) {
+    description: 'Saari settings ek nazar mein (jo abhi ON/OFF hai wahi dikhata hai)',
+    async execute({ sock, from, isInstanceOwner, botNumber, isGroup }) {
       if (!isInstanceOwner) return sock.sendMessage(from, { text: NOT_OWNER });
       const s = await store.getInstanceSettings(botNumber);
-      return sock.sendMessage(from, {
-        text: `⚙️ *Settings*\n\nMode: ${s.mode}\nPrefix: ${s.prefix}\nAntidelete: ${onOff(s.antidelete)}\nAntiedit: ${onOff(s.antiedit)}\nAutoread: ${onOff(s.autoRead)}\nAutoreact: ${onOff(s.autoReact)}\nAutotyping: ${onOff(s.autoTyping)}\nRecording: ${onOff(s.recording)}\nStatusview: ${onOff(s.statusView)}\nAnticall: ${onOff(s.antiCall)}\nWelcome: ${onOff(s.welcomeEnabled)}\nGoodbye: ${onOff(s.goodbyeEnabled)}\nAdminaction: ${onOff(s.adminAction)}\nAway: ${onOff(s.awayEnabled)}\nAFK: ${onOff(s.afk)}`,
-      });
+      const lines = [
+        '⚙️ *Settings*', '',
+        `Mode: ${s.mode || 'private'}`,
+        `Prefix: ${s.prefix || '.'}`,
+        `Antidelete: ${onOff(s.antideleteOn)}`,
+        `Antiedit (private chats): ${onOff(s.antieditOn)}`,
+        `Autoread: ${onOff(s.autoRead)}`,
+        `Autoreact: ${onOff(s.autoReact)}`,
+        `Autotyping: ${onOff(s.autoTyping)}`,
+        `Recording: ${onOff(s.recording)}`,
+        `Statusview: ${onOff(s.statusView)}`,
+        `Anticall: ${onOff(s.antiCall)}`,
+        `Adminaction: ${onOff(s.adminAction)}`,
+        `Away: ${onOff(s.awayEnabled)}`,
+        `AFK: ${onOff(s.afk)}`,
+        `Chatbot: ${onOff(s.chatbot)}`,
+      ];
+      if (isGroup) {
+        const gs = await store.getGroupSettings(from);
+        const mode = (v) => (!v || v === 'off' ? 'off' : v === true ? 'on' : String(v));
+        lines.push('', '👥 *Is group ki settings*', '',
+          `Welcome: ${onOff(gs.welcomeOn)}`,
+          `Goodbye: ${onOff(gs.goodbyeOn)}`,
+          `Antilink: ${mode(gs.antilink)}`,
+          `Antivoice: ${mode(gs.antivoice)}`,
+          `Antisticker: ${mode(gs.antisticker)}`,
+          `Antivideo: ${mode(gs.antivideo)}`,
+          `Antipic: ${mode(gs.antipic)}`,
+          `Antigcstatus: ${mode(gs.antigcstatus)}`,
+          `Antimention: ${mode(gs.antimention)}`,
+          `Antiedit: ${onOff(gs.antieditOn)}`);
+      } else {
+        lines.push('', '💡 Welcome/Goodbye aur anti settings har group ki alag hoti hain — kisi group mein .settings likhein.');
+      }
+      return sock.sendMessage(from, { text: lines.join('\n') });
     },
   },
   {

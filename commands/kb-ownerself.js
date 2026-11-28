@@ -3,6 +3,8 @@ const viewOnceCache = require('../lib/viewOnceCache');
 const { getUptimeText } = require('../lib/uptime');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
+const OWNER_ONLY = '❌ This command is only for the bot owner.';
+
 const VV_NOT_FOUND = tinyBold(
   'Ye view-once abhi save nahi ho pa raha.\n' +
   'Ye WhatsApp ki taraf ka masla hai (bot tak content nahi aa raha), bot ka issue nahi.\n' +
@@ -68,8 +70,9 @@ async function extractViewOnce(sock, msg) {
 module.exports = [
   {
     name: 'vv',
-    description: 'View-once media ko dobara isi chat mein bhejta hai (reply karke)',
-    execute: async ({ sock, msg, from }) => {
+    description: 'View-once media ko dobara isi chat mein bhejta hai (reply karke, sirf bot owner)',
+    execute: async ({ sock, msg, from, isInstanceOwner }) => {
+      if (!isInstanceOwner) return sock.sendMessage(from, { text: OWNER_ONLY });
       const media = await extractViewOnce(sock, msg);
       if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       await sock.sendMessage(from, media.isImage ? { image: media.buffer, caption: media.caption } : { video: media.buffer, caption: media.caption });
@@ -77,8 +80,9 @@ module.exports = [
   },
   {
     name: 'vv2',
-    description: 'View-once media ko owner ki apni DM mein bhejta hai',
-    execute: async ({ sock, msg, from }) => {
+    description: 'View-once media ko owner ki apni DM mein bhejta hai (sirf bot owner)',
+    execute: async ({ sock, msg, from, isInstanceOwner }) => {
+      if (!isInstanceOwner) return sock.sendMessage(from, { text: OWNER_ONLY });
       const media = await extractViewOnce(sock, msg);
       if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       const ownerJid = `${sock.user.id.split(':')[0]}@s.whatsapp.net`;
@@ -88,8 +92,9 @@ module.exports = [
   },
   {
     name: 'vv3',
-    description: 'View-once media ko document ki tarah bhejta hai (dobara view-once na bane)',
-    execute: async ({ sock, msg, from }) => {
+    description: 'View-once media ko document ki tarah bhejta hai (dobara view-once na bane, sirf bot owner)',
+    execute: async ({ sock, msg, from, isInstanceOwner }) => {
+      if (!isInstanceOwner) return sock.sendMessage(from, { text: OWNER_ONLY });
       const media = await extractViewOnce(sock, msg);
       if (!media) return sock.sendMessage(from, { text: VV_NOT_FOUND });
       await sock.sendMessage(from, { document: media.buffer, mimetype: media.isImage ? 'image/jpeg' : 'video/mp4', fileName: media.isImage ? 'image.jpg' : 'video.mp4' });

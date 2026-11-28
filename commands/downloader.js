@@ -1,5 +1,18 @@
 const axios = require('axios');
 const { Readable } = require('node:stream');
+const { createLimiter } = require('../lib/limiter');
+
+// Downloads par load control: ek waqt mein sirf DL_CONCURRENCY (default 2) download, aur har download par time limit
+// (DL_TIMEOUT_MS, default 120s). 50 users ek saath .song/.video lagayen to dyno ki RAM khatam nahi hogi.
+const dlLimit = createLimiter(parseInt(process.env.DL_CONCURRENCY || '2', 10));
+const DL_TIMEOUT_MS = Math.max(20000, parseInt(process.env.DL_TIMEOUT_MS || '120000', 10));
+function withTimeout(promise, ms, label) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { t = setTimeout(() => reject(new Error(`${label || 'Kaam'} mein ${Math.round(ms / 1000)}s se zyada lag gaye, dobara koshish karein.`)), ms); }),
+  ]).finally(() => clearTimeout(t));
+}
 
 // YouTube download ke liye "youtubei.js" use karte hain (search + download
 // dono isi mein built-in hain). Pehle "@distube/ytdl-core" istemal karne ka
@@ -36,7 +49,7 @@ async function resolveVideoId(query) {
   if (urlMatch) return { id: urlMatch[1] };
 
   const yt = await getYtClient();
-  const search = await yt.search(query, { type: 'video' });
+  const search = await withTimeout(yt.search(query, { type: 'video' }), 25000, 'YouTube search');
   // Sirf wo result jiska sahi video ID ho (channel cards / adhoore results chhod do)
   const list = [...(search?.videos || []), ...(search?.results || [])];
   const first = list.find((r) => r && typeof r.id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(r.id));
@@ -179,7 +192,7 @@ async function videoCmd(ctx) {
   try {
     const found = await resolveVideoId(ctx.text);
     if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
-    const got = await downloadMediaSmart(found.id, found.title, 'video');
+    const got = await dlLimit(() => withTimeout(downloadMediaSmart(found.id, found.title, 'video'), DL_TIMEOUT_MS, 'Video download'));
     const media = got.buffer ? { video: got.buffer } : { video: { url: got.url } };
     await ctx.sock.sendMessage(ctx.from, {
       ...media,
@@ -240,7 +253,7 @@ const commands = [
         const found = await resolveVideoId(ctx.text);
         if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
 
-        const got = await downloadAudioSmart(found.id, found.title);
+        const got = await dlLimit(() => withTimeout(downloadAudioSmart(found.id, found.title), DL_TIMEOUT_MS, 'Audio download'));
         if (got.durationSec > MAX_DURATION_SEC) {
           return ctx.reply(`❌ *${got.title}* 15 minute se lamba hai, chhota gaana try karein.`);
         }
@@ -277,7 +290,7 @@ const commands = [
         const found = await resolveVideoId(ctx.text);
         if (!found) return ctx.reply('❌ Koi result nahi mila, doosra naam ya link try karein.');
 
-        const { buffer, title, durationSec } = await downloadVideo(found.id);
+        const { buffer, title, durationSec } = await dlLimit(() => withTimeout(downloadVideo(found.id), DL_TIMEOUT_MS, 'Video download'));
         if (durationSec > MAX_DURATION_SEC) {
           return ctx.reply(`❌ *${title}* 15 minute se lamba hai, chhoti video try karein.`);
         }

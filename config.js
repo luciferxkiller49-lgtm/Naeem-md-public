@@ -14,9 +14,20 @@ if (!PANEL_KEY) {
   process.exit(1);
 }
 
+// APP_ID ab zaroori hai (1 se 10, har Heroku app ka alag). Pehle default '1' tha, is se jis app par APP_ID
+// bhoolta wo node 1 ki sessions utha leta tha aur do dyno ek hi session par lad padte the (440 loop).
+// Ab APP_ID na ho to app crash nahi hoti, lekin koi session load nahi karti aur pairing mein saaf error deti hai.
+const APP_ID_RAW = String(process.env.APP_ID || '').trim();
+const APP_ID_MISSING = !/^\d{1,2}$/.test(APP_ID_RAW);
+if (APP_ID_MISSING) {
+  console.error('[CONFIG] ERROR: APP_ID Config Var set nahi (ya galat hai). Is app par koi bot session load nahi hoga aur pairing band rahegi.');
+  console.error('[CONFIG] Heroku Config Vars mein APP_ID=1..10 set karein (har app ka alag) aur restart karein.');
+}
+
 module.exports = {
   PORT: process.env.PORT || 5000,
-  APP_ID: String(process.env.APP_ID || '1'), // 1 to 10, one per Heroku dyno
+  APP_ID: APP_ID_MISSING ? '' : APP_ID_RAW, // 1 to 10, one per Heroku dyno
+  APP_ID_MISSING,
   SERVER_NAME: process.env.SERVER_NAME || '', // optional: .ping mein dikhane ka naam (khali = 'Server #N')
   MONGODB_URI: process.env.MONGODB_URI || '',
   PANEL_KEY,

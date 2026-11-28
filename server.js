@@ -15,6 +15,19 @@ app.use(express.urlencoded({ extended: true }));
 
 let mongoClient = null;
 
+// APP_ID set na ho to ye server pairing/bot ke liye band hai: har request par saaf error (panel doosra server chun le)
+const APP_ID_ERR = 'Is server par APP_ID set nahi hai, isliye ye server use nahi ho sakta. Koi doosra server select karein.';
+app.use((req, res, next) => {
+  if (!config.APP_ID_MISSING) return next();
+  return res.status(503).json({
+    error: 'app_id_missing',
+    message: APP_ID_ERR,
+    available: false,
+    online: false,
+    status: 'misconfigured',
+  });
+});
+
 // GET /active -> { count, limit }
 app.get('/active', (req, res) => {
   const status = capacity.getStatus();
@@ -107,6 +120,11 @@ app.get('/status', panelAuth, (req, res) => {
 // Mongo is unreachable there is nothing useful this dyno can do — exit so
 // Heroku restarts it instead of serving broken requests.
 async function start() {
+  if (config.APP_ID_MISSING) {
+    // Crash nahi: server chalta rahe taake panel ko 503 + saaf message mile (upar wala middleware)
+    app.listen(config.PORT, () => console.error('[INIT] APP_ID missing: sirf error-mode mein chal raha hai (koi bot session load nahi hua).'));
+    return;
+  }
   if (!config.MONGODB_URI) {
     console.error('[INIT] FATAL: MONGODB_URI not set.');
     process.exit(1);

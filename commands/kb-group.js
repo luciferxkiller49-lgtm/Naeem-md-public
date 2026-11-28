@@ -1,39 +1,50 @@
 // Check karta hai ke message bhejne wala group admin hai ya nahi
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { findParticipant, isAdminP } = require('../lib/groupUtil');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// LID ho ya number, dono tarah ke participant ko pehchanta hai (pehle sirf p.id === userId tha)
 async function isAdmin(sock, groupId, userId) {
   const metadata = await sock.groupMetadata(groupId);
-  const participant = metadata.participants.find((p) => p.id === userId);
-  return participant?.admin === 'admin' || participant?.admin === 'superadmin';
+  return isAdminP(findParticipant(metadata.participants, userId));
 }
 
 function getMentioned(msg) {
   return msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
 }
 
-function isOwner(msg, config) {
-  if (msg.key.fromMe) return true;
-  const jid = msg.key.participantPn || msg.key.participant || msg.key.remoteJid || '';
-  const sender = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-  return sender === config.ownerNumber.replace(/[^0-9]/g, '');
-}
-
 module.exports = [
   {
     name: 'add',
     description: 'Group mein naya member add karta hai (admin only)',
-    execute: async ({ sock, msg, from, args }) => {
+    execute: async (ctx) => {
+      const { sock, from, args } = ctx;
       if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: 'This command only works in groups.' });
-
-      const senderAdmin = await isAdmin(sock, from, msg.key.participant || msg.key.remoteJid);
-      if (!senderAdmin) return sock.sendMessage(from, { text: 'Only admins can use this command.' });
+      if (!(ctx.isAdmin || ctx.isInstanceOwner)) return sock.sendMessage(from, { text: 'Only admins can use this command.' });
+      if (!ctx.isBotAdmin) return sock.sendMessage(from, { text: '❌ Pehle bot ko group admin banayein, tabhi member add ho sakta hai.' });
 
       const number = args[0]?.replace(/[^0-9]/g, '');
       if (!number) return sock.sendMessage(from, { text: 'Number likhein. e.g. .add 923001234567' });
+      if (number.length < 8 || number.length > 15) return sock.sendMessage(from, { text: '❌ Number sahi nahi hai. Country code ke saath likhein, e.g. .add 923001234567' });
 
-      await sock.groupParticipantsUpdate(from, [`${number}@s.whatsapp.net`], 'add');
-      await sock.sendMessage(from, { text: '✅ Member added.' });
+      try {
+        const res = await sock.groupParticipantsUpdate(from, [`${number}@s.whatsapp.net`], 'add');
+        const st = String(res?.[0]?.status ?? '200');
+        if (st.startsWith('2')) return sock.sendMessage(from, { text: `✅ +${number} group mein add ho gaya.` });
+        const why = {
+          '409': 'ye number pehle se group mein hai.',
+          '403': 'is number ki privacy setting direct add nahi hone deti. Group ka invite link bhej dein.',
+          '408': 'ye number haal hi mein group chhod chuka hai, thori der baad try karein.',
+          '401': 'is number ne group/bot ko block kiya hua hai.',
+          '404': 'ye number WhatsApp par nahi mila.',
+          '400': 'ye number WhatsApp par nahi mila.',
+          '500': 'WhatsApp ne request reject kar di, thori der baad try karein.',
+        }[st] || `WhatsApp ne add nahi hone diya (code ${st}).`;
+        return sock.sendMessage(from, { text: `❌ +${number} add nahi hua: ${why}` });
+      } catch (err) {
+        console.error('[ADD] failed:', err.message);
+        return sock.sendMessage(from, { text: `❌ Add nahi ho saka: ${err.message}` });
+      }
     },
   },
   {
@@ -153,10 +164,9 @@ module.exports = [
   {
     name: 'out',
     description: 'Bot is group se khud nikal jata hai (owner only)',
-    execute: async ({ sock, msg, from, config }) => {
+    execute: async ({ sock, from, isInstanceOwner }) => {
       if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: 'This command only works in groups.' });
-      const sender = (msg.key.participant || msg.key.remoteJid).replace(/[^0-9]/g, '');
-      if (sender !== config.ownerNumber.replace(/[^0-9]/g, '')) {
+      if (!isInstanceOwner) {
         return sock.sendMessage(from, { text: "Only this bot's owner can use this command." });
       }
       await sock.sendMessage(from, { text: '👋 Bye!' });
@@ -243,9 +253,8 @@ module.exports = [
   {
     name: 'newgc',
     description: 'Naya group banata hai: .newgc Group Naam | 923xx,923yy (owner only)',
-    execute: async ({ sock, from, msg, args, config }) => {
-      const sender = (msg.key.participant || msg.key.remoteJid).replace(/[^0-9]/g, '');
-      if (sender !== config.ownerNumber.replace(/[^0-9]/g, '')) {
+    execute: async ({ sock, from, args, isInstanceOwner }) => {
+      if (!isInstanceOwner) {
         return sock.sendMessage(from, { text: "Only this bot's owner can use this command." });
       }
       const [name, numbersStr] = args.join(' ').split('|');
@@ -262,9 +271,8 @@ module.exports = [
   {
     name: 'join',
     description: 'Invite link se group join karta hai (owner only): .join <link>',
-    execute: async ({ sock, from, msg, args, config }) => {
-      const sender = (msg.key.participant || msg.key.remoteJid).replace(/[^0-9]/g, '');
-      if (sender !== config.ownerNumber.replace(/[^0-9]/g, '')) {
+    execute: async ({ sock, from, args, isInstanceOwner }) => {
+      if (!isInstanceOwner) {
         return sock.sendMessage(from, { text: "Only this bot's owner can use this command." });
       }
       const link = args[0];
@@ -315,10 +323,9 @@ module.exports = [
   {
     name: 'dismissall',
     description: 'Group ke saare non-admin members ko ek sath remove karta hai (owner only, sambhal kar)',
-    execute: async ({ sock, msg, from, config }) => {
+    execute: async ({ sock, from, isInstanceOwner }) => {
       if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: 'This command only works in groups.' });
-      const sender = (msg.key.participant || msg.key.remoteJid).replace(/[^0-9]/g, '');
-      if (sender !== config.ownerNumber.replace(/[^0-9]/g, '')) {
+      if (!isInstanceOwner) {
         return sock.sendMessage(from, { text: "Only this bot's owner can use this command." });
       }
       try {
@@ -335,9 +342,8 @@ module.exports = [
   {
     name: 'broadcast',
     description: 'Bot jin groups mein hai un sab ko ek message bhejta hai (owner only)',
-    execute: async ({ sock, msg, from, args, config }) => {
-      const sender = (msg.key.participant || msg.key.remoteJid).replace(/[^0-9]/g, '');
-      if (sender !== config.ownerNumber.replace(/[^0-9]/g, '')) {
+    execute: async ({ sock, from, args, isInstanceOwner }) => {
+      if (!isInstanceOwner) {
         return sock.sendMessage(from, { text: "Only this bot's owner can use this command." });
       }
       const text = args.join(' ');

@@ -119,6 +119,8 @@ module.exports = [
       const list = Array.isArray(s.channelReact) ? s.channelReact : [];
       if (!list.includes(ch.jid)) await store.setInstanceSettings(ctx.botNumber, { channelReact: [...list, ch.jid] });
       await rememberChannel(ctx.botNumber, ch);
+      // Foran live updates subscribe (warna nayi post bot tak nahi pohanchti aur react nahi hota)
+      try { if (typeof ctx.sock.subscribeNewsletterUpdates === 'function') await ctx.sock.subscribeNewsletterUpdates(ch.jid); } catch (e) { console.error('[CHREACT] subscribe failed:', e.message); }
       return ctx.reply(`✅ ${ch.name} ki har nayi post par ${CHANNEL_REACT_EMOJI} react hoga.`);
     },
   },

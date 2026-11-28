@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { getUptimeText } = require('../lib/uptime');
+const { tzForNumber, valid: validTz } = require('../lib/tz');
 
 module.exports = [
   {
@@ -21,17 +22,22 @@ module.exports = [
   },
   {
     name: 'date',
-    description: 'Aaj ki tareekh',
-    execute: async ({ sock, from }) => {
-      await sock.sendMessage(from, { text: `📅 ${new Date().toDateString()}` });
+    description: 'Aaj ki tareekh (bot owner ke number ke country ke hisaab se)',
+    execute: async ({ sock, from, botNumber }) => {
+      const tz = tzForNumber(botNumber);
+      const d = new Date().toLocaleDateString('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      await sock.sendMessage(from, { text: `📅 ${d}` });
     },
   },
   {
     name: 'timenow',
     aliases: ['time'],
-    description: 'Abhi ka waqt (server time)',
-    execute: async ({ sock, from }) => {
-      await sock.sendMessage(from, { text: `🕐 ${new Date().toLocaleString()}` });
+    description: 'Abhi ka waqt (bot owner ke number ke country ke hisaab se; .time Asia/Dubai se doosra shehar)',
+    execute: async ({ sock, from, args, botNumber }) => {
+      const asked = args?.[0];
+      const tz = asked && validTz(asked) ? asked : tzForNumber(botNumber);
+      const t = new Date().toLocaleString('en-GB', { timeZone: tz, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+      await sock.sendMessage(from, { text: `🕐 ${t}\n🌍 ${tz}` });
     },
   },
   {

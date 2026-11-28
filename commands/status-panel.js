@@ -34,6 +34,7 @@ module.exports = [
           row('Antivoice', gs.antivoice),
           row('Antisticker', gs.antisticker),
           row('Antivideo', gs.antivideo),
+          row('Antipic', gs.antipic),
           row('Antigcstatus', gs.antigcstatus),
           row('Antimention', gs.antimention),
           row('Antiedit', gs.antieditOn),

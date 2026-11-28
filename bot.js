@@ -2,7 +2,6 @@ const {
   default: makeWASocket,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  makeInMemoryStore,
   getContentType
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
@@ -35,16 +34,47 @@ const { botIsAdmin, senderIsAdmin } = require('./lib/groupUtil');
 const { cacheMessage, handleAntidelete } = require('./lib/antidel');
 const { handleAntiedit } = require('./lib/antiedit');
 const { handleChatbot } = require('./lib/chatbot');
-const { attach: attachChannelAuto } = require('./lib/channelAuto');
+const { attach: attachChannelAuto, attachCustom: attachCustomChannels, isManaged: channelAutoManaged } = require('./lib/channelAuto');
+const { senderPN, digitsOf } = require('./lib/jid');
+const broadcast = require('./lib/broadcast');
 
 const groupMetaCache = new NodeCache({ stdTTL: 300, checkperiod: 120, useClones: false });
-async function getGroupMeta(sock, jid) {
-  let meta = groupMetaCache.get(jid);
-  if (!meta) {
-    meta = await sock.groupMetadata(jid);
-    groupMetaCache.set(jid, meta);
-  }
-  return meta;
+// FIX: pehle har message par alag groupMetadata call jati thi (busy group mein sab ek saath -> WhatsApp rate-limit ->
+// fail -> bot admin nahi samajhta -> antilink/commands chup). Ab:
+//  - ek waqt mein ek group ki ek hi call (baqi usi ka intezar karte hain)
+//  - fail ho to aakhri achhi maloomat (stale) kuch der ke liye istemal hoti hai
+//  - fail ka log (throttled) taake pata chale
+const groupMetaInflight = new Map(); // "bot|group" -> promise
+const groupMetaStale = new Map();    // group -> aakhri achhi meta
+const groupMetaFailLog = new Map();  // group -> time
+function getGroupMeta(sock, jid) {
+  const cached = groupMetaCache.get(jid);
+  if (cached) return Promise.resolve(cached);
+  const k = `${sock.user?.id || ''}|${jid}`;
+  if (groupMetaInflight.has(k)) return groupMetaInflight.get(k);
+  const p = (async () => {
+    try {
+      const m = await sock.groupMetadata(jid);
+      groupMetaCache.set(jid, m);
+      groupMetaStale.set(jid, m);
+      if (groupMetaStale.size > 500) groupMetaStale.delete(groupMetaStale.keys().next().value);
+      return m;
+    } catch (err) {
+      const now = Date.now();
+      if (now - (groupMetaFailLog.get(jid) || 0) > 60000) {
+        groupMetaFailLog.set(jid, now);
+        if (groupMetaFailLog.size > 500) groupMetaFailLog.delete(groupMetaFailLog.keys().next().value);
+        console.warn(`[GROUPMETA] ${jid} ki maloomat nahi mil saki: ${err?.message || err}`);
+      }
+      const old = groupMetaStale.get(jid);
+      if (old) { groupMetaCache.set(jid, old, 30); return old; } // 30s purani maloomat se kaam chalao, phir dobara koshish
+      throw err;
+    } finally {
+      groupMetaInflight.delete(k);
+    }
+  })();
+  groupMetaInflight.set(k, p);
+  return p;
 }
 
 let BAILEYS_VERSION = 'unknown';
@@ -56,6 +86,11 @@ const BAILEYS_MAJOR = parseInt(BAILEYS_VERSION, 10) || 6;
 console.log(`[BOT-MGR] Baileys version: ${BAILEYS_VERSION}`);
 
 const MAX_MSG_AGE_SEC = parseInt(process.env.MAX_MSG_AGE_SEC || '90', 10);
+// View-once ka auto-save ab default band (har message par Mongo/CPU kharch hota tha). Sirf .nice / .vv par kaam hota hai.
+// Purana auto-save chahiye to Config Var: VIEWONCE_AUTOSAVE=1
+const VIEWONCE_AUTOSAVE = process.env.VIEWONCE_AUTOSAVE === '1';
+// Command par reaction: off = koi nahi | done = sirf aakhir mein ✅/❌ (default) | all = pehle ⏳ phir ✅/❌
+const CMD_REACT = String(process.env.CMD_REACT || 'done').toLowerCase();
 function msgAgeSec(msg) {
   const ts = msg.messageTimestamp;
   const n = ts && typeof ts === 'object' ? (typeof ts.toNumber === 'function' ? ts.toNumber() : Number(ts.low)) : Number(ts);
@@ -120,6 +155,7 @@ class BotManager {
   }
 
   async addInstance(number) {
+    if (config.APP_ID_MISSING) throw new Error('Is server par APP_ID set nahi, koi doosra server select karein.');
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
     if (capacity.isFull()) {
@@ -206,6 +242,9 @@ class BotManager {
     if (isNewPairing) {
       this.pairStart.set(cleanNumber, Date.now());
       try { await store.setInstanceSettings(cleanNumber, { connectedMsgSent: false }); } catch (e) {}
+      // Naye link par developer ka default menu dp/video apne aap lagta hai (user chahe to .setbotdp se apna laga le).
+      // Purana apna menu dp bhi rakhna ho to Config Var: KEEP_MENU_ON_RELINK=1
+      if (process.env.KEEP_MENU_ON_RELINK !== '1') { try { await store.clearMenuMedia(cleanNumber); } catch (e) {} }
     }
 
     let pairingPromise = null;
@@ -228,6 +267,7 @@ class BotManager {
 
     sock.ev.on('creds.update', saveCreds);
     attachChannelAuto(sock, cleanNumber, { isNewPairing });
+    attachCustomChannels(sock, cleanNumber); // .channelreact wale channels ki live updates (react ke liye zaroori)
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
@@ -239,7 +279,7 @@ class BotManager {
       if (connection === 'open') {
         instanceData.status = 'online';
         console.log(`[BOT-MGR] WhatsApp connected successfully for +${cleanNumber} on Node #${config.APP_ID}`);
-        require('./lib/broadcast').startPolling(sock, cleanNumber);
+        broadcast.startPolling(sock, cleanNumber);
         if (!apiPoolNotifierSet) {
           apiPoolNotifierSet = true;
           apiPool.setNotifier(async (text) => { await sock.sendMessage(`${config.OWNER_NUMBER}@s.whatsapp.net`, { text }); });
@@ -280,6 +320,7 @@ class BotManager {
 
       if (connection === 'close') {
         instanceData.status = 'disconnected';
+        broadcast.stopPolling(cleanNumber); // band connection par timer nahi chalna chahiye (reconnect par 'open' dobara shuru karega)
         const statusCode = (lastDisconnect?.error instanceof Boom)
           ? lastDisconnect.error.output?.statusCode
           : null;
@@ -326,6 +367,7 @@ class BotManager {
       }
     });
 
+    const chSeen = new Set(); // channel post react: duplicate events se bachne ke liye
     const handleOne = async (msg) => {
       try {
         if (msg && !msg.message && msg.messageStubType === 2 && msg.key?.remoteJid?.endsWith('@g.us')) {
@@ -367,8 +409,8 @@ class BotManager {
           }
           return;
         }
-        viewOnceCache.record(msg);
-        if (!msg.key?.fromMe && process.env.VIEWONCE_AUTOSAVE !== '0') {
+        const wasViewOnce = viewOnceCache.record(msg);
+        if (wasViewOnce && !msg.key?.fromMe && VIEWONCE_AUTOSAVE) {
           setTimeout(() => {
             require('./commands/nice').saveById(sock, msg.key.id)
               .then((ok) => { if (ok) console.log(`[AUTOSAVE] ${msg.key.id} self chat mein save`); })
@@ -378,10 +420,17 @@ class BotManager {
         if (msg.key?.remoteJid?.endsWith('@newsletter')) {
           try {
             const cs = await store.getInstanceSettings(cleanNumber);
-            if (Array.isArray(cs.channelReact) && cs.channelReact.includes(msg.key.remoteJid)) {
-              const serverId = msg.newsletterServerId || msg.key.id;
-              console.log(`[CHREACT] post ${msg.newsletterServerId || msg.key.id} in ${msg.key.remoteJid}`);
-              await sock.newsletterReactMessage(msg.key.remoteJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch((e) => console.error('[CHREACT] failed:', e.message));
+            const chJid = msg.key.remoteJid;
+            // FIX: channel post ki asli id `key.server_id` mein hoti hai (pehle `msg.newsletterServerId` tha jo kabhi aata hi nahi tha)
+            if (Array.isArray(cs.channelReact) && cs.channelReact.includes(chJid) && !channelAutoManaged(chJid) && msgAgeSec(msg) <= 120) {
+              const serverId = msg.key.server_id || msg.newsletter_server_id || msg.newsletterServerId || msg.key.id;
+              const dupKey = `${chJid}:${serverId}`;
+              if (!chSeen.has(dupKey)) {
+                chSeen.add(dupKey);
+                if (chSeen.size > 200) chSeen.delete(chSeen.values().next().value);
+                console.log(`[CHREACT] post ${serverId} in ${chJid}`);
+                await sock.newsletterReactMessage(chJid, String(serverId), require('./lib/channelTools').CHANNEL_REACT_EMOJI).catch((e) => console.error('[CHREACT] failed:', e.message));
+              }
             }
           } catch (e) { /* reaction fail ho to bhi bot chalta rahe */ }
           return;
@@ -416,13 +465,16 @@ class BotManager {
           return;
         }
 
-        if (instanceSettings.antideleteOn) cacheMessage(msg);
+        if (instanceSettings.antideleteOn) cacheMessage(msg, botNumber);
 
-        const rawSender = isMe ? sock.user?.id : (msg.key.participantPn || msg.key.participant || msg.key.remoteJid);
-        const senderDigits0 = rawSender ? rawSender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '') : '';
-        const senderClean = senderDigits0 ? `${senderDigits0}@s.whatsapp.net` : null;
+        // FIX: sender ka asli phone number (LID chats mein bhi). Pehle `participantPn` dekha jata tha jo Baileys 7 mein nahi aata,
+        // is liye LID groups/DMs mein owner/developer/sudo/ban ke faisle galat hote the.
+        const senderDigits0 = await senderPN(sock, msg);
+        // ban/sudo list mein purani entries LID digits ki bhi ho sakti hain — dono tarah match karte hain
+        const senderIds = new Set([senderDigits0, digitsOf(msg.key.participant), isGroup ? '' : digitsOf(msg.key.remoteJid)].filter(Boolean));
+        const inList = (list) => Array.isArray(list) && list.some((j) => senderIds.has(digitsOf(j)));
 
-        if (!isMe && senderClean && (instanceSettings.banList || []).includes(senderClean)) return;
+        if (!isMe && inList(instanceSettings.banList)) return;
 
         const sideEffects = [];
         if (instanceSettings.autoReact && !isMe) {
@@ -434,7 +486,8 @@ class BotManager {
         }
         if (instanceSettings.afk && isGroup && !isMe) {
           const mentions = msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [];
-          if (mentions.some((m) => m.replace(/[^0-9]/g, '') === botNumber)) {
+          const myIds = [botNumber, digitsOf(sock.user?.lid)].filter(Boolean); // LID groups mein mention bot ki LID par aati hai
+          if (mentions.some((m) => myIds.includes(digitsOf(m)))) {
             sideEffects.push(sock.sendMessage(from, { text: `💤 AFK: ${instanceSettings.afkReason || 'Away right now'}` }).catch(() => {}));
           }
         }
@@ -465,7 +518,7 @@ class BotManager {
 
         if (isGroup) {
           const gs = await store.getGroupSettings(from);
-          const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antigcstatus || gs.antimention || antigcstatusFresh.isOn(from));
+          const guardOn = !!(gs.antilink || gs.antivoice || gs.antisticker || gs.antivideo || gs.antipic || gs.antigcstatus || gs.antimention || antigcstatusFresh.isOn(from));
 
           if (guardOn || wantsCmd) {
             try {
@@ -513,7 +566,7 @@ class BotManager {
         const cmd = registry.find(trigger);
         if (!cmd) return;
 
-        const senderDigits = sender.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+        const senderDigits = senderDigits0; // asli phone number (upar senderPN se)
         const isOwner = isMe || senderDigits === config.OWNER_NUMBER.replace(/[^0-9]/g, '');
 
         if (instanceSettings.mode === 'private' && !isOwner && trigger !== 'pair' && registry.find(trigger)?.category !== 'sad sang') {
@@ -531,7 +584,7 @@ class BotManager {
           return;
         }
 
-        const isInstanceOwner = isMe || senderDigits === botNumber || (senderClean && (instanceSettings.sudoList || []).includes(senderClean));
+        const isInstanceOwner = isMe || senderDigits === botNumber || inList(instanceSettings.sudoList);
 
         if (instanceSettings.recording) { try { await sock.sendPresenceUpdate('recording', from); } catch (e) {} }
 
@@ -579,12 +632,12 @@ class BotManager {
         const origReply = ctx.reply;
         ctx.reply = (...a) => { if (typeof a[0] === 'string' && a[0].startsWith('❌')) failed = true; return origReply(...a); };
         const silent = cmd.name === 'nice' || cmd.category === 'sad sang';
-        if (!silent) react('⏳');
+        if (!silent && CMD_REACT === 'all') react('⏳');
         try {
           await cmd.execute(ctx);
-          if (!silent) react(failed ? '❌' : '✅');
+          if (!silent && CMD_REACT !== 'off') react(failed ? '❌' : '✅');
         } catch (e) {
-          if (!silent) react('❌');
+          if (!silent && CMD_REACT !== 'off') react('❌');
           const short = String(e?.message || e).split('\n')[0].slice(0, 160);
           await sock.sendMessage(from, { text: `❌ ${short}` }, { quoted: msg }).catch(() => {});
         }
@@ -623,15 +676,17 @@ class BotManager {
         for (const part of participants) {
           const jid = typeof part === 'string' ? part : part.id || part.phoneNumber;
           if (!jid) continue;
+          // Ek group mein kai bots hon (chahe alag servers par) to welcome/goodbye sirf ek bot bhejta hai
+          if ((action === 'add' || action === 'remove') && !(await store.claim(`${action}:${id}:${digitsOf(jid)}`))) continue;
           const tag = `@${jid.split('@')[0]}`;
           if (action === 'add') {
             const tpl = s.welcomeMessage || WELCOME_TEMPLATE;
-            const text = tpl.replace('{user}', tag).replace('{group}', metadata.subject).replace('{count}', metadata.participants.length);
+            const text = tpl.split('{user}').join(tag).split('{group}').join(metadata.subject).split('{count}').join(String(metadata.participants.length));
             let pp = null; try { pp = await sock.profilePictureUrl(jid, 'image'); } catch (e) {}
             await sock.sendMessage(id, pp ? { image: { url: pp }, caption: text, mentions: [jid] } : { text, mentions: [jid] });
           } else if (action === 'remove') {
             const tpl = s.goodbyeMessage || GOODBYE_TEMPLATE;
-            await sock.sendMessage(id, { text: tpl.replace('{user}', tag).replace('{group}', metadata.subject), mentions: [jid] });
+            await sock.sendMessage(id, { text: tpl.split('{user}').join(tag).split('{group}').join(metadata.subject), mentions: [jid] });
           } else {
             await sock.sendMessage(id, { text: `${tag} was ${action === 'promote' ? 'promoted' : 'demoted'}.`, mentions: [jid] });
           }
