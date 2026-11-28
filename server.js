@@ -74,6 +74,7 @@ app.get(['/code', '/api/code', '/api/pair'], panelAuth, async (req, res) => {
     return res.json({
       success: true,
       code: result.code,
+      replacing: !!result.replacing, // true = number pehle se linked tha: naya connection ban raha hai, connect hote hi purana band
       number: cleanNumber,
       appId: config.APP_ID,
       message: 'Pairing code successfully issued.'

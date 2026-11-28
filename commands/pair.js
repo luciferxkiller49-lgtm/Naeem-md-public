@@ -35,9 +35,10 @@ const pairCmd = {
   async execute(ctx) {
     const { sock, msg, from } = ctx;
     // Tag ke liye phone number wala JID (LID ki bajaye) pehle
-    const senderJid = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid || from;
+    // (DM mein LID ho to asli number remoteJidAlt mein hota hai)
+    const senderJid = msg.key.participantAlt || msg.key.remoteJidAlt || msg.key.participant || msg.key.remoteJid || from;
     const raw = (ctx.args || [])[0];
-    const num = normalizeNumber(raw || msg.key.participantAlt || (from.endsWith('@s.whatsapp.net') ? from : ''));
+    const num = normalizeNumber(raw || msg.key.participantAlt || msg.key.remoteJidAlt || (from.endsWith('@s.whatsapp.net') ? from : ''));
     if (!/^\d{11,15}$/.test(num)) {
       throw new Error(raw
         ? 'Sahi number likhein, country code ke saath. Misal: .pair 923001234567 ya .pair 03001234567'
@@ -48,15 +49,19 @@ const pairCmd = {
     const pairRouter = require('../lib/pairRouter');
     const target = await pairRouter.pickServer().catch(() => null);
     let code;
+    let replacing = false;
     if (target && String(target.id) !== String(config.APP_ID)) {
-      ({ code } = await pairRouter.requestPair(num, target.id));
+      ({ code, replacing } = await pairRouter.requestPair(num, target.id));
     } else {
       const mgr = require('../bot'); // lazy: circular import se bachne ke liye
       if (!mgr.ready) throw new Error('Node abhi start ho raha hai, thori dair baad try karein.');
-      ({ code } = await mgr.addInstance(num));
+      ({ code, replacing } = await mgr.addInstance(num));
     }
 
-    const body = TEMPLATE.replace('{{PAIRING_CODE}}', String(code));
+    let body = TEMPLATE.replace('{{PAIRING_CODE}}', String(code));
+    if (replacing) {
+      body += '\n\nℹ️ Ye number pehle se linked tha. Code lagate hi naya connection ban jayega aur purana apne aap band ho jayega. Agar code na lagayen to purana waise hi chalta rahega.';
+    }
     await sock.sendMessage(from, {
       text: `@${digits(senderJid)} your pair is generated\n\n${body}`,
       mentions: [senderJid],

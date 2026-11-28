@@ -119,6 +119,7 @@ class BotManager {
     this.pairStart = new Map();
     this.reconnectTimers = new Map();
     this.pairingPromises = new Map();
+    this.swaps = new Map(); // number -> naya (abhi tak promote na hua) pairing: { token, docId, sock, instanceData, auth, startedAt }
   }
 
   async init(db) {
@@ -158,24 +159,153 @@ class BotManager {
     if (config.APP_ID_MISSING) throw new Error('Is server par APP_ID set nahi, koi doosra server select karein.');
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
-    if (capacity.isFull()) {
+    // Number pehle se linked hai (kisi bhi server par)? To "replace" mode: naya connection (naya code) banta hai, aur purani
+    // connection tab tak waise hi chalti rehti hai jab tak naya sach mein connect na ho jaye. Naya connect hote hi purani band.
+    // (PAIR_REPLACE=0 Config Var se purana tareeka wapas aa jata hai.)
+    let linkedDoc = null;
+    try {
+      linkedDoc = await this.sessionsCol.findOne({ _id: cleanNumber }, { projection: { appId: 1, 'creds.registered': 1, 'creds.me.id': 1 } });
+    } catch (e) { /* check fail ho to normal pairing */ }
+    const alreadyLinked = !!(linkedDoc && (linkedDoc.creds?.registered || linkedDoc.creds?.me?.id));
+    const replacing = alreadyLinked && process.env.PAIR_REPLACE !== '0';
+    const onThisNode = this.instances.has(cleanNumber) || (!!linkedDoc && String(linkedDoc.appId) === String(config.APP_ID));
+
+    if (capacity.isFull() && !(replacing && onThisNode)) {
       throw new Error(`Node #${config.APP_ID} has reached maximum capacity (${config.MAX_LIMIT}).`);
     }
 
     const inFlight = this.pairingPromises.get(cleanNumber);
     if (inFlight) return inFlight;
 
-    const p = this.startInstance(cleanNumber, true).finally(() => {
+    const p = this.startInstance(cleanNumber, true, replacing ? { swap: true } : {}).finally(() => {
       this.pairingPromises.delete(cleanNumber);
     });
     this.pairingPromises.set(cleanNumber, p);
     return p;
   }
 
-  async startInstance(number, isNewPairing = false) {
+  // ---- Naya pairing (replace mode) ke madadgar ----
+
+  /** Adhoora naya-pairing (agar tha) saaf: sirf pending doc/socket, purani asli connection ko haath nahi lagata */
+  async _abortSwap(number, token, sock, auth) {
+    const cur = this.swaps.get(number);
+    if (cur && (!token || cur.token === token)) this.swaps.delete(number);
+    const key = `${number}~new`;
+    const t = this.reconnectTimers.get(key);
+    if (t) { clearTimeout(t); this.reconnectTimers.delete(key); }
+    this.retries.delete(key);
+    this.pairStart.delete(key);
+    try { sock?.ev?.removeAllListeners?.(); } catch (e) {}
+    try { sock?.end?.(new Error('Naya pairing band')); } catch (e) {}
+    try { await auth?.deleteSession?.(); } catch (e) {}
+  }
+
+  async cancelSwap(number) {
+    const cur = this.swaps.get(number);
+    if (cur) await this._abortSwap(number, cur.token, cur.sock, cur.auth);
+    // koi purana bacha hua pending doc bhi (restart/crash ke baad) — taake naya pairing bilkul fresh shuru ho
+    try { await this.sessionsCol.deleteOne({ _id: `${number}~new`, appId: String(config.APP_ID) }); } catch (e) {}
+  }
+
+  /** Purani connection band: Mongo likhna band, WhatsApp se logout (linked device list se hat jaye), socket end */
+  async _retireInstance(old, number) {
+    try { old.auth?.freeze?.(); } catch (e) {}
+    try { old.sock?.ev?.removeAllListeners?.(); } catch (e) {}
+    const t = this.reconnectTimers.get(number);
+    if (t) { clearTimeout(t); this.reconnectTimers.delete(number); }
+    this.retries.delete(number);
+    this.pairStart.delete(number);
+    if (this.instances.get(number) === old) this.instances.delete(number);
+    try {
+      await Promise.race([
+        Promise.resolve(old.sock?.logout?.()),
+        new Promise((r) => setTimeout(r, 8000)),
+      ]);
+    } catch (e) { /* purani connection pehle se kharab thi — logout na ho paya, neeche end() */ }
+    try { old.sock?.end?.(new Error('Naye connection se replace')); } catch (e) {}
+    old.status = 'disconnected';
+  }
+
+  /** Naya connection (pending) sach mein connect ho gaya: asli doc badlo, purani connection band karo */
+  async _promoteSwap(number, token, instanceData) {
+    const cur = this.swaps.get(number);
+    if (!cur || cur.token !== token) throw new Error('Ye naya pairing ab replace ho chuka hai');
+
+    const old = this.instances.get(number);
+    const oldHere = old && old.sock !== instanceData.sock ? old : null;
+    if (oldHere) { try { oldHere.auth?.freeze?.(); } catch (e) {} } // uski likhai pehle band (naye doc ko dirty na kare)
+
+    let prevApp = null;
+    try {
+      const prev = await this.sessionsCol.findOne({ _id: number }, { projection: { appId: 1 } });
+      prevApp = prev ? String(prev.appId) : null;
+    } catch (e) {}
+
+    await instanceData.auth.promoteTo(number); // yahan fail ho to asli doc waise hi rehta hai (caller abort karega)
+
+    this.instances.set(number, instanceData);
+    this.swaps.delete(number);
+    const key = `${number}~new`;
+    const t = this.reconnectTimers.get(key);
+    if (t) { clearTimeout(t); this.reconnectTimers.delete(key); }
+    this.retries.delete(key);
+    this.pairStart.delete(key);
+
+    // naya link: connect message dobara, aur developer wala default menu
+    try { await store.setInstanceSettings(number, { connectedMsgSent: false }); } catch (e) {}
+    if (process.env.KEEP_MENU_ON_RELINK !== '1') { try { await store.clearMenuMedia(number); } catch (e) {} }
+
+    if (oldHere) await this._retireInstance(oldHere, number);
+    if (prevApp && prevApp !== String(config.APP_ID)) {
+      try { await this._requestDrop(number, prevApp); } catch (e) { console.error('[PAIR] drop request fail:', e.message); }
+    }
+    console.log(`[PAIR] +${number}: naya connection active ho gaya${oldHere ? ', purani connection band' : prevApp && prevApp !== String(config.APP_ID) ? `, Node #${prevApp} ko purani band karne ko kaha` : ''}.`);
+  }
+
+  /** Doosre server (jahan purani connection thi) ko batana ke us number ki purani connection band kare */
+  async _requestDrop(number, toAppId) {
+    if (!store.collection) return;
+    await store.collection.updateOne(
+      { _id: `drop:${number}` },
+      { $set: { to: String(toAppId), number, status: 'pending', at: Date.now() } },
+      { upsert: true }
+    );
+  }
+
+  /** pairRouter worker isse chalata hai: agar ye number ab Mongo mein kisi doosre node ka ho chuka hai to yahan ki purani connection band */
+  async dropInstance(number) {
+    const n = String(number).replace(/[^0-9]/g, '');
+    const old = this.instances.get(n);
+    if (!old) return false;
+    const doc = await this.sessionsCol.findOne({ _id: n }, { projection: { appId: 1 } });
+    if (!doc || String(doc.appId) === String(config.APP_ID)) return false; // ab bhi hamara hai — kuch band nahi
+    await this._retireInstance(old, n);
+    capacity.setCount(this.getActiveCount());
+    console.log(`[PAIR] +${n}: Node #${doc.appId} par naya connection ban gaya, yahan ki purani connection band.`);
+    return true;
+  }
+
+  async startInstance(number, isNewPairing = false, opts = {}) {
     const cleanNumber = String(number).replace(/[^0-9]/g, '');
 
-    const existing = this.instances.get(cleanNumber);
+    // replace mode: naya connection alag "pending" doc/socket par banta hai, purana (this.instances mein) tab tak chalta rehta hai
+    const swapMode = !!opts.swap;
+    let swapActive = swapMode; // promote hone tak true
+    const swapKey = `${cleanNumber}~new`;
+    let key = swapMode ? swapKey : cleanNumber; // timers/retries/pairStart ki key
+    let swapToken = opts.token || null;
+
+    if (swapMode) {
+      if (isNewPairing) {
+        await this.cancelSwap(cleanNumber); // pehle ka adhoora naya-pairing (agar tha)
+        swapToken = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      } else {
+        const cur = this.swaps.get(cleanNumber);
+        if (!cur || cur.token !== swapToken) return null; // cancel/replace ho chuka, ye purana reconnect hai
+      }
+    }
+
+    const existing = swapMode ? null : this.instances.get(cleanNumber);
     if (existing && !isNewPairing && (existing.status === 'connecting' || existing.status === 'online')) {
       return existing;
     }
@@ -191,7 +321,7 @@ class BotManager {
       this.instances.delete(cleanNumber);
     }
 
-    if (isNewPairing) {
+    if (isNewPairing && !swapMode) {
       try {
         const other = await this.sessionsCol.findOne({ _id: cleanNumber }, { projection: { appId: 1 } });
         if (other && String(other.appId) !== String(config.APP_ID)) {
@@ -207,11 +337,13 @@ class BotManager {
       } catch (e) { console.error('[PAIR] stale link check failed:', e.message); }
     }
 
-    const { state, saveCreds, deleteSession, listKeyIds } = await useMongoDBAuthState(
+    const auth = await useMongoDBAuthState(
       this.sessionsCol,
       cleanNumber,
-      config.APP_ID
+      config.APP_ID,
+      swapMode ? swapKey : undefined
     );
+    const { state, saveCreds, deleteSession, listKeyIds } = auth;
 
     const version = await getWaVersion();
 
@@ -235,16 +367,26 @@ class BotManager {
       sock,
       number: cleanNumber,
       status: 'connecting',
-      pairingCode: null
+      pairingCode: null,
+      auth
     };
-    this.instances.set(cleanNumber, instanceData);
+    if (swapMode) {
+      // naya connection abhi "pending": this.instances mein purani connection waise hi rehti hai
+      const prevSwap = this.swaps.get(cleanNumber);
+      this.swaps.set(cleanNumber, { token: swapToken, docId: swapKey, sock, instanceData, auth, startedAt: prevSwap?.startedAt || Date.now() });
+    } else {
+      this.instances.set(cleanNumber, instanceData);
+    }
 
     if (isNewPairing) {
-      this.pairStart.set(cleanNumber, Date.now());
-      try { await store.setInstanceSettings(cleanNumber, { connectedMsgSent: false }); } catch (e) {}
-      // Naye link par developer ka default menu dp/video apne aap lagta hai (user chahe to .setbotdp se apna laga le).
-      // Purana apna menu dp bhi rakhna ho to Config Var: KEEP_MENU_ON_RELINK=1
-      if (process.env.KEEP_MENU_ON_RELINK !== '1') { try { await store.clearMenuMedia(cleanNumber); } catch (e) {} }
+      this.pairStart.set(key, Date.now());
+      if (!swapMode) {
+        try { await store.setInstanceSettings(cleanNumber, { connectedMsgSent: false }); } catch (e) {}
+        // Naye link par developer ka default menu dp/video apne aap lagta hai (user chahe to .setbotdp se apna laga le).
+        // Purana apna menu dp bhi rakhna ho to Config Var: KEEP_MENU_ON_RELINK=1
+        if (process.env.KEEP_MENU_ON_RELINK !== '1') { try { await store.clearMenuMedia(cleanNumber); } catch (e) {} }
+      }
+      // replace mode mein ye sab (connect message, menu default) naya connect hone par _promoteSwap mein hota hai
     }
 
     let pairingPromise = null;
@@ -274,6 +416,19 @@ class BotManager {
 
       if (connection === 'connecting') {
         instanceData.status = 'connecting';
+      }
+
+      if (connection === 'open' && swapActive) {
+        // Naya connection sach mein connect: asli doc isko do, purani connection (is ya doosre server par) band karo
+        try {
+          await this._promoteSwap(cleanNumber, swapToken, instanceData);
+          swapActive = false;
+          key = cleanNumber;
+        } catch (e) {
+          console.error(`[PAIR] +${cleanNumber}: naya connection promote nahi ho saka, purani connection waise hi rahegi:`, e.message);
+          await this._abortSwap(cleanNumber, swapToken, sock, auth);
+          return;
+        }
       }
 
       if (connection === 'open') {
@@ -327,10 +482,32 @@ class BotManager {
 
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         const paired = !!(sock.authState.creds.registered || sock.authState.creds.me?.id);
-        const giveUp = !loggedOut && shouldGiveUp({ paired, statusCode, pairStartedAt: this.pairStart.get(cleanNumber) });
+        const giveUp = !loggedOut && shouldGiveUp({ paired, statusCode, pairStartedAt: this.pairStart.get(key) });
         const forbidden = statusCode === 403;
         const shouldReconnect = !loggedOut && !forbidden && !giveUp;
-        console.warn(`[BOT-MGR] Connection closed for +${cleanNumber} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
+        console.warn(`[BOT-MGR] Connection closed for +${cleanNumber}${swapActive ? ' (naya pairing)' : ''} (reason: ${statusCode}). Reconnect: ${shouldReconnect}`);
+
+        if (swapActive) {
+          // Naya (abhi pending) connection ka maamla: purani asli connection (this.instances mein) ko bilkul nahi chhoona
+          const swapRec = this.swaps.get(cleanNumber);
+          const tooLong = swapRec && Date.now() - swapRec.startedAt > 10 * 60 * 1000;
+          if (shouldReconnect && !tooLong && swapRec && swapRec.token === swapToken) {
+            const attempt = (this.retries.get(key) || 0) + 1;
+            this.retries.set(key, attempt);
+            const tok = swapToken;
+            const timer = setTimeout(() => {
+              this.reconnectTimers.delete(key);
+              this.startInstance(cleanNumber, false, { swap: true, token: tok }).catch((err) => {
+                console.error(`[BOT-MGR] Naye pairing ka reconnect fail +${cleanNumber}:`, err.message);
+              });
+            }, nextDelay(attempt, statusCode));
+            this.reconnectTimers.set(key, timer);
+          } else {
+            console.log(`[PAIR] +${cleanNumber}: naya pairing mukammal nahi hua — purani connection waise hi chal rahi hai.`);
+            await this._abortSwap(cleanNumber, swapToken, sock, auth);
+          }
+          return;
+        }
 
         if (shouldReconnect) {
           const attempt = (this.retries.get(cleanNumber) || 0) + 1;
@@ -713,11 +890,16 @@ class BotManager {
           pairingPromise,
           new Promise((_, reject) => setTimeout(() => reject(new Error('WhatsApp se pairing code lene mein 20s se zyada lag gaye. Dobara koshish karein.')), 20000)),
         ]);
-        return { code, number: cleanNumber, status: instanceData.status };
+        return { code, number: cleanNumber, status: instanceData.status, replacing: swapMode };
       } catch (err) {
-        try { sock.ev.removeAllListeners(); } catch (e) {}
-        try { sock.end(err); } catch (e) {}
-        this.instances.delete(cleanNumber);
+        if (swapMode) {
+          // naya pairing fail: sirf pending saaf, purani asli connection waise hi
+          await this._abortSwap(cleanNumber, swapToken, sock, auth);
+        } else {
+          try { sock.ev.removeAllListeners(); } catch (e) {}
+          try { sock.end(err); } catch (e) {}
+          this.instances.delete(cleanNumber);
+        }
         throw err;
       }
     }
