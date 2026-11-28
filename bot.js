@@ -37,6 +37,7 @@ const { handleChatbot } = require('./lib/chatbot');
 const { attach: attachChannelAuto, attachCustom: attachCustomChannels, isManaged: channelAutoManaged } = require('./lib/channelAuto');
 const { senderPN, digitsOf } = require('./lib/jid');
 const broadcast = require('./lib/broadcast');
+const gcTrace = require('./lib/gcTrace');
 
 const groupMetaCache = new NodeCache({ stdTTL: 300, checkperiod: 120, useClones: false });
 // FIX: pehle har message par alag groupMetadata call jati thi (busy group mein sab ek saath -> WhatsApp rate-limit ->
@@ -622,6 +623,20 @@ class BotManager {
           if (!pn) { try { pn = await sock.signalRepository?.lidMapping?.getPNForLID?.(from); } catch (e) {} }
           if (!pn && msg.key.fromMe && sock.user?.id) pn = sock.user.id;
           if (pn) from = `${pn.split('@')[0].split(':')[0]}@s.whatsapp.net`;
+        }
+        // Group status (story) kabhi group ke naam se aata hai, kabhi status@broadcast par. Pehle status@broadcast wale
+        // seedha return ho jate the (sirf statusView), is liye antistatus unhe kabhi dekhta hi nahi tha.
+        // Ab agar us message mein group ka JID mil jaye to usi group ke guard se guzarta hai.
+        if (from === 'status@broadcast' && gcTrace.gcStatusKeys(msg.message).length > 0 && !msg.key.fromMe) {
+          const gj = gcTrace.groupJidFromStatus(msg);
+          gcTrace.add({
+            kind: 'route', route: 'status@broadcast', group: gj || null, sender: msg.key.participant || msg.key.participantAlt || null,
+            result: gj ? 'group JID mil gaya — us group ke guard se guzara' : 'group JID message mein nahi mila — guard nahi chal sakta',
+            shape: gcTrace.shape(msg.message),
+          });
+          if (gj) from = gj;
+        } else if (from.endsWith('@g.us') && !msg.key.fromMe && gcTrace.gcStatusKeys(msg.message).length > 0) {
+          gcTrace.add({ kind: 'route', route: 'group', group: from, sender: msg.key.participant || msg.key.participantAlt || null, result: 'group chat mein aaya', shape: gcTrace.shape(msg.message) });
         }
         const isGroup = from.endsWith('@g.us');
         const sender = isGroup ? (msg.key.participant || from) : from;
